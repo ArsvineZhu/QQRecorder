@@ -1,0 +1,11 @@
+name = "qq_recorder"
+version = "1.1.2"
+main = "main.py"
+entry_class = "QQRecorderPlugin"
+author = "Arsvine Zhu"
+description = "静默 QQ 消息记录器 —— 无感记录群聊与私聊中的所有消息"
+
+[pip_dependencies]
+sqlalchemy = ">=2.0"
+aiosqlite = ">=0.19.0"
+aiohttp = ">=3.9"

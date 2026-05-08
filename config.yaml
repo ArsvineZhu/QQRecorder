@@ -1,0 +1,13 @@
+bot_uin: '3644596926'
+root: '2162371684'
+debug: false
+adapters:
+- type: ai
+  platform: ai
+  enabled: true
+  config: {}
+plugin:
+  plugins_dir: plugins
+  load_plugin: true
+  plugin_whitelist: []
+  plugin_blacklist: []
