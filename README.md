@@ -141,7 +141,8 @@ QQRecorder/
 ├── config.yaml                 # NcatBot 主配置
 ├── scripts/
 │   ├── export_db.py            # 数据库导出与查询工具
-│   └── fix_image_extensions.py # 图片格式修复工具（v1.1.2 迁移用）
+│   ├── fix_image_extensions.py # 图片格式修复工具（v1.1.2 迁移用）
+│   └── fix_newline_escaping.py # 换行符转义修复工具（v1.1.3 迁移用）
 └── recorder/
     ├── config.yaml             # 插件运行配置
     ├── napcat/                 # NapCat 协议端（第三方组件，请勿修改）
@@ -159,6 +160,7 @@ QQRecorder/
             ├── message_parser.py # 消息段解析
             ├── image_handler.py  # 图片下载与格式检测
             ├── forward_parser.py # 合并转发解析
+            ├── text_utils.py    # 文本转义/反转义工具
             ├── manifest.toml    # NcatBot 插件清单
             └── AGENTS.md         # 插件级知识库
 ```
@@ -207,6 +209,18 @@ python scripts/fix_image_extensions.py --dry-run
 
 # 执行修复
 python scripts/fix_image_extensions.py
+```
+
+### fix_newline_escaping.py
+
+v1.1.3 换行符转义修复工具。旧版本中消息内容以原始换行符存入数据库，导致显示和导出时格式异常。此脚本扫描 `messages.raw_message` 和 `forward_messages.content_summary`，将 `\n`/`\r`/`\t` 转义为 `\\n`/`\\t`。
+
+```bash
+# 预览修改（不实际执行）
+python scripts/fix_newline_escaping.py --dry-run
+
+# 执行修复
+python scripts/fix_newline_escaping.py
 ```
 
 ## 数据模型
@@ -276,6 +290,10 @@ python scripts/fix_image_extensions.py            # 执行
 ```
 
 ## 更新日志
+
+### v1.1.3
+
+- **修复**：消息中的换行符（`\n`、`\r`、`\t`）以原始形式存入数据库，导致命令输出和导出格式异常。现已在存储时将控制字符转义为字符串表示（`\n`→`\\n`、`\r`→`\\n`、`\t`→`\\t`），显示时还原原始文本。提供迁移脚本 `scripts/fix_newline_escaping.py` 修复已有数据。
 
 ### v1.1.2
 

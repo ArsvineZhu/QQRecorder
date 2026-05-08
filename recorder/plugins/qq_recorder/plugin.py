@@ -11,18 +11,19 @@ from .storage import MessageStorage
 from .message_parser import parse_message, ImageInfo
 from .image_handler import process_images, ImageResult
 from .forward_parser import parse_forward_response, flatten_forward_nodes
+from .text_utils import escape_text, unescape_text
 
 
 class QQRecorderPlugin(NcatBotPlugin):
     name = "qq_recorder"
-    version = "1.1.2"
+    version = "1.1.3"
     author = "Arsvine Zhu"
     description = "静默 QQ 消息记录器"
 
     def __init__(self):
         super().__init__()
-        self._settings: Optional[RecorderSettings] = None
-        self.storage: Optional[MessageStorage] = None
+        self._settings: RecorderSettings
+        self.storage: MessageStorage
 
     async def on_load(self):
         self.init_defaults(DEFAULT_CONFIG)
@@ -114,7 +115,7 @@ class QQRecorderPlugin(NcatBotPlugin):
         lines = [f"\nRecent {len(messages)} messages:"]
         for msg in messages:
             ts = msg.timestamp.strftime("%m-%d %H:%M") if msg.timestamp else "?"
-            raw = msg.raw_message or ""
+            raw = unescape_text(msg.raw_message or "")
             if len(raw) > 30:
                 raw = raw[:27] + "..."
             extras = []
@@ -143,7 +144,7 @@ class QQRecorderPlugin(NcatBotPlugin):
         lines = [f'\n"{keyword}" — {len(messages)} results:']
         for msg in messages:
             ts = msg.timestamp.strftime("%m-%d %H:%M") if msg.timestamp else "?"
-            raw = msg.raw_message or ""
+            raw = unescape_text(msg.raw_message or "")
             if len(raw) > 30:
                 raw = raw[:27] + "..."
             extras = []
@@ -199,7 +200,7 @@ class QQRecorderPlugin(NcatBotPlugin):
                 "group_id": event.get("group_id"),
                 "chat_type": chat_type,
                 "timestamp": datetime.fromtimestamp(event["time"]),
-                "raw_message": event.get("raw_message", ""),
+                "raw_message": escape_text(event.get("raw_message", "")),
                 "segments": parsed.segments,
                 "images": [{"file_url": img.file_url, "file_unique": img.file_unique, "file_size": img.file_size} for img in parsed.images],
                 "replies": [{"reply_to_message_id": rep.reply_to_message_id} for rep in parsed.replies],
@@ -225,7 +226,7 @@ class QQRecorderPlugin(NcatBotPlugin):
         all_forwards = []
         for forward_id in forward_ids:
             try:
-                response = await self.api.qq.get_forward_msg(forward_id)
+                response = await self.api.qq.query.get_forward_msg(forward_id)
                 nodes = parse_forward_response(response, max_depth=self._settings.forward.max_depth)
                 flattened = flatten_forward_nodes(nodes)
                 all_forwards.extend(flattened)
@@ -241,7 +242,7 @@ class QQRecorderPlugin(NcatBotPlugin):
             results = await process_images(images_info, self._settings.storage.images_dir, self._settings.image)
             for img_info, img_result in zip(images_info, results):
                 if img_result.success:
-                    async with self.storage.AsyncSessionLocal() as session:
+                    async with self.storage.AsyncSessionLocal() as session: # pyright: ignore[reportOptionalCall]
                         stmt = select(Image).where(
                             Image.message_id == message_db_id,
                             Image.file_unique == img_info.file_unique,
@@ -261,19 +262,32 @@ class QQRecorderPlugin(NcatBotPlugin):
     def _event_to_dict(self, event) -> dict:
         message_segments = [seg.to_dict() for seg in event.message]
 
+        # Type assertions to eliminate OptionalMemberAccess warnings
+        has_group = hasattr(event, "group_id") and event.group_id
+        if has_group:
+            assert event.group_id is not None
+        
+        has_user = hasattr(event, "user_id")
+        if has_user:
+            assert event.user_id is not None
+        
+        has_sender = hasattr(event, "sender")
+        if has_sender:
+            assert event.sender is not None
+
         return {
             "post_type": "message",
-            "message_type": "group" if hasattr(event, "group_id") and event.group_id else "private",
+            "message_type": "group" if has_group else "private",
             "message_id": str(event.message_id) if hasattr(event, "message_id") else "",
-            "group_id": str(event.group_id) if hasattr(event, "group_id") and event.group_id else None,
-            "user_id": str(event.user_id) if hasattr(event, "user_id") else "",
+            "group_id": str(event.group_id) if has_group else None,
+            "user_id": str(event.user_id) if has_user else "",
             "time": event.time if hasattr(event, "time") else 0,
             "message": message_segments,
             "raw_message": event.raw_message if hasattr(event, "raw_message") else "",
             "sender": {
-                "user_id": str(event.sender.user_id) if hasattr(event, "sender") and hasattr(event.sender, "user_id") else "",
-                "nickname": event.sender.nickname if hasattr(event, "sender") and hasattr(event.sender, "nickname") else "",
-                "card": str(event.sender.card) if hasattr(event, "sender") and hasattr(event.sender, "card") and event.sender.card else "",
+                "user_id": str(event.sender.user_id) if has_sender and hasattr(event.sender, "user_id") else "",
+                "nickname": event.sender.nickname if has_sender and hasattr(event.sender, "nickname") else "",
+                "card": str(event.sender.card) if has_sender and hasattr(event.sender, "card") and event.sender.card else "",
             },
         }
 
@@ -284,7 +298,7 @@ class QQRecorderPlugin(NcatBotPlugin):
         nickname = sender.get("nickname", "")
         card = sender.get("card", "")
         display_name = card or nickname or event.get("user_id", "?")
-        raw = event.get("raw_message", "")
+        raw = unescape_text(event.get("raw_message", ""))
         if len(raw) > 50:
             raw = raw[:47] + "..."
 

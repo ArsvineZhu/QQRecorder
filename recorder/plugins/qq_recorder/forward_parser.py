@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
+
+from .text_utils import escape_text
 
 
 @dataclass
@@ -48,7 +50,7 @@ def _parse_single_node(data: dict, depth: int, max_depth: int) -> ForwardNode:
     forward_id = str(data.get("forward_id", ""))
     content = data.get("content")
 
-    content_summary = extract_text_from_content(content)
+    content_summary = escape_text(extract_text_from_content(content))
 
     children: list[ForwardNode] = []
     if depth < max_depth and isinstance(content, list):
@@ -98,7 +100,11 @@ def flatten_forward_nodes(nodes: list[ForwardNode]) -> list[dict]:
 
 
 def parse_forward_response(
-    response_data: dict, max_depth: int = 10
+    response_data: Any, max_depth: int = 10
 ) -> list[ForwardNode]:
-    messages = response_data.get("messages", [])
+    # 支持 ForwardMessageData (Pydantic 模型，有 .messages 属性) 和 dict
+    if hasattr(response_data, "messages"):
+        messages = response_data.messages
+    else:
+        messages = response_data.get("messages", [])
     return parse_forward_nodes(messages, depth=0, max_depth=max_depth)

@@ -21,9 +21,39 @@ import sys
 from datetime import datetime
 from io import StringIO
 
+
 # Fix Windows console encoding — GBK can't handle CJK/emoji in DB content
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Text normalisation (handle both pre- and post-migration data)
+# ---------------------------------------------------------------------------
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for safe display/export by ensuring newlines are escaped.
+
+    Handles both old (unescaped) and new (escaped) data in the DB:
+    1. Unescape to recover original content
+    2. Re-escape to produce consistent escaped output
+    """
+    if not text:
+        return text
+    # Unescape: convert stored \n → actual newline (handles new escaped data)
+    # Then escape: convert actual newline → \n (handles old unescaped data)
+    unescaped = (
+        text
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+    )
+    return (
+        unescaped
+        .replace("\r\n", "\\n")
+        .replace("\r", "\\n")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+    )
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -319,7 +349,7 @@ def cmd_table(conn, args):
         display_row = []
         for idx in display_order:
             if idx in text_indices:
-                display_row.append(str(row[idx]) if row[idx] is not None else "-")
+                display_row.append(_normalize_text(str(row[idx])) if row[idx] is not None else "-")
             else:
                 display_row.append(_fmt_cell(row[idx], col_names[idx]))
         display_rows.append(display_row)
@@ -378,7 +408,7 @@ def cmd_messages(conn, args):
             str(r[0]), r[1], r[2],
             r[3] or "-", r[4], _fmt_ts(r[5]),
             ",".join(flags) if flags else "-",
-            str(r[6]) if r[6] is not None else "-",
+            _normalize_text(str(r[6])) if r[6] is not None else "-",
         ])
 
     _print_table(headers, display_rows, f"Messages (showing {len(rows)}/{total})")
@@ -457,7 +487,10 @@ def cmd_export(conn, args):
             row_dict = {}
             for i, col in enumerate(col_names):
                 val = row[i]
-                if isinstance(val, str) and len(val) >= 10 and "20" in val[:4] and "-" in val[4:5]:
+                # Normalize text fields to ensure consistent newline escaping
+                if isinstance(val, str) and _is_text_col(col):
+                    val = _normalize_text(val)
+                elif isinstance(val, str) and len(val) >= 10 and "20" in val[:4] and "-" in val[4:5]:
                     try:
                         dt = datetime.strptime(val, "%Y-%m-%d %H:%M:%S.%f")
                         val = dt.isoformat()
@@ -527,7 +560,7 @@ def cmd_search(conn, args):
     for r in rows:
         display_rows.append([
             str(r[0]), r[2], r[3] or "-",
-            _fmt_ts(r[5]), str(r[6]) if r[6] is not None else "-",
+            _fmt_ts(r[5]), _normalize_text(str(r[6])) if r[6] is not None else "-",
         ])
 
     _print_table(

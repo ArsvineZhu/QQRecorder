@@ -20,7 +20,7 @@ class ImageResult:
     success: bool
     error: str = ""
 
-def generate_image_path(base_dir: str, filename: str, date: datetime.datetime = None) -> str:
+def generate_image_path(base_dir: str, filename: str, date: datetime.datetime = None) -> str: # pyright: ignore[reportArgumentType]
     if date is None:
         date = datetime.datetime.now()
     date_path = os.path.join(base_dir, str(date.year), f"{date.month:02d}", f"{date.day:02d}")
@@ -95,7 +95,7 @@ def generate_filename(file_unique: str, url: str = "", content_type: str = "", i
 def calculate_md5(data: bytes) -> str:
     return hashlib.md5(data).hexdigest().lower()
 
-async def download_image(url: str, timeout: int = 30, max_size: int = 20971520, session: aiohttp.ClientSession = None) -> Tuple[bytes, dict]:
+async def download_image(url: str, timeout: int = 30, max_size: int = 20971520, session: aiohttp.ClientSession = None) -> Tuple[bytes, dict]: # pyright: ignore[reportArgumentType]
     own_session = session is None
     try:
         timeout_obj = aiohttp.ClientTimeout(total=timeout)
@@ -124,7 +124,7 @@ async def save_image(image_data: bytes, filepath: str) -> str:
         return filepath
     return await asyncio.to_thread(_save)
 
-async def process_image(image_info: ImageInfo, config_storage_dir: str, config_image: ImageConfig, session: aiohttp.ClientSession = None) -> ImageResult:
+async def process_image(image_info: ImageInfo, config_storage_dir: str, config_image: ImageConfig, session: aiohttp.ClientSession = None) -> ImageResult: # pyright: ignore[reportArgumentType]
     try:
         if not image_info.file_url:
             return ImageResult(local_path="", file_unique="", file_size=0, success=False, error="Empty URL")
