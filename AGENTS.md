@@ -1,7 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-05-08
-**Version:** 1.1.3
+**Version:** 1.2.4
 **Author:** Arsvine Zhu
 
 ## OVERVIEW
@@ -19,7 +19,9 @@ QQRecorder/
 │   └── plugins/qq_recorder/   # Core plugin code (see sub-AGENTS.md)
 ├── scripts/                   # Utility scripts
 │   ├── export_db.py           # DB inspection/export (summary, schema, search, export)
-│   └── fix_image_extensions.py # Migration: fix .jpg files that are actually GIF/PNG
+│   ├── fix_image_extensions.py # Migration: fix .jpg files that are actually GIF/PNG
+│   ├── fix_newline_escaping.py # Migration: fix raw newlines in DB
+│   └── fix_image_duplicates.py # Migration: dedup images + add unique constraint
 ├── config.yaml                # NcatBot main config (bot UIN, adapters, plugin loading)
 └── pyproject.toml             # Dependencies: ncatbot5, sqlalchemy, aiosqlite, aiohttp
 ```
@@ -28,13 +30,15 @@ QQRecorder/
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Add message handling logic | `recorder/plugins/qq_recorder/plugin.py` | Event handlers + command routing |
+| Add message handling logic | `recorder/plugins/qq_recorder/processors.py` | MessageProcessor orchestrates the pipeline |
+| Add/modify command handlers | `recorder/plugins/qq_recorder/commands.py` | CommandHandler: stats/recent/search |
+| Change event conversion | `recorder/plugins/qq_recorder/events.py` | Pure functions: event_to_dict, is_command |
 | Change what gets recorded | `recorder/plugins/qq_recorder/config.py` | Targets, image/forward settings |
 | Modify DB schema | `recorder/plugins/qq_recorder/models.py` | SQLAlchemy models |
 | Fix image processing | `recorder/plugins/qq_recorder/image_handler.py` | Download, format detection, storage |
 | Adjust plugin config | `recorder/config.yaml` | `plugin.plugin_configs.qq_recorder` |
 | Inspect recorded data | `scripts/export_db.py` | 8 subcommands (summary, search, export…) |
-| Bot startup | `cd recorder && python -m ncatbot` | NcatBot loads plugin from plugins/ |
+| Bot startup | `uv run ncatbot run` (from project root) | NcatBot loads plugin from plugins/ |
 
 ## CONVENTIONS
 
@@ -58,7 +62,7 @@ QQRecorder/
 
 ```bash
 # Start the bot
-cd recorder && python -m ncatbot
+uv run ncatbot run
 
 # Install dependencies
 uv sync
@@ -71,6 +75,10 @@ python scripts/export_db.py export -o backup.json
 # Fix image extensions (after format detection upgrade)
 python scripts/fix_image_extensions.py --dry-run
 python scripts/fix_image_extensions.py
+
+# Fix image duplicates (after UniqueConstraint migration)
+python scripts/fix_image_duplicates.py --dry-run
+python scripts/fix_image_duplicates.py
 ```
 
 ## NOTES

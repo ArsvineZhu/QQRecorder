@@ -115,8 +115,7 @@ plugin:
 ### 启动
 
 ```bash
-cd recorder
-python -m ncatbot
+uv run ncatbot run
 ```
 
 ### 命令
@@ -142,7 +141,8 @@ QQRecorder/
 ├── scripts/
 │   ├── export_db.py            # 数据库导出与查询工具
 │   ├── fix_image_extensions.py # 图片格式修复工具（v1.1.2 迁移用）
-│   └── fix_newline_escaping.py # 换行符转义修复工具（v1.1.3 迁移用）
+│   ├── fix_newline_escaping.py # 换行符转义修复工具（v1.1.3 迁移用）
+│   └── fix_image_duplicates.py # 图片重复记录修复工具（v1.2.4 迁移用）
 └── recorder/
     ├── config.yaml             # 插件运行配置
     ├── napcat/                 # NapCat 协议端（第三方组件，请勿修改）
@@ -152,8 +152,10 @@ QQRecorder/
     │       └── images/         # 图片存储目录
     └── plugins/
         └── qq_recorder/        # 核心插件代码
-            ├── main.py          # 插件入口
-            ├── plugin.py        # 消息处理、命令响应
+            ├── plugin.py        # 插件入口，生命周期与事件注册
+            ├── events.py        # 事件转换、命令检测、日志格式化
+            ├── commands.py      # 命令处理（stats/recent/search）
+            ├── processors.py    # 消息处理管道（消息/转发/图片）
             ├── config.py        # 配置模型与校验
             ├── models.py        # SQLAlchemy 数据模型
             ├── storage.py       # 异步数据库操作
@@ -223,6 +225,18 @@ python scripts/fix_newline_escaping.py --dry-run
 python scripts/fix_newline_escaping.py
 ```
 
+### fix_image_duplicates.py
+
+v1.2.4 图片重复记录修复工具。旧版本中图片查询使用 `file_unique` 字段，但 QQ 经常返回 `"0"`，导致同一消息下多张图片产生 `MultipleResultsFound` 异常。此脚本去重并重建 images 表，添加 `(message_id, file_url)` 唯一约束。
+
+```bash
+# 预览修改（不实际执行）
+python scripts/fix_image_duplicates.py --dry-run
+
+# 执行修复
+python scripts/fix_image_duplicates.py
+```
+
 ## 数据模型
 
 | 表名 | 说明 |
@@ -290,6 +304,17 @@ python scripts/fix_image_extensions.py            # 执行
 ```
 
 ## 更新日志
+
+### v1.2.4
+
+- **重构**：拆分臃肿的 `plugin.py`（328行→73行），提取为独立模块：
+  - `events.py` — 事件转换、命令检测、日志格式化（纯函数）
+  - `commands.py` — 命令处理（stats/recent/search）
+  - `processors.py` — 消息处理管道（消息/转发/图片）
+- **修复**：合并转发消息含空 ID 时导致 `ValueError` 崩溃，现过滤空白 ID
+- **修复**：图片查询因 `file_unique` 为 `"0"` 产生 `MultipleResultsFound` 异常，现改用 `file_url` 匹配
+- **移除**：多余的 `main.py` 入口文件，`manifest.toml` 直接指向 `plugin.py`
+- **新增**：`scripts/fix_image_duplicates.py` 迁移脚本，为 images 表添加唯一约束并去重
 
 ### v1.1.3
 
