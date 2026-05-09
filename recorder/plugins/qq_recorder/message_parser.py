@@ -82,8 +82,9 @@ def extract_forward_ids(segments: List[Dict]) -> List[str]:
     forward_ids = []
     for seg in segments:
         if seg["type"] == "forward":
-            forward_id = seg["data"].get("id", "")
-            forward_ids.append(forward_id)
+            forward_id = seg["data"].get("id", "").strip()
+            if forward_id:
+                forward_ids.append(forward_id)
     return forward_ids
 
 

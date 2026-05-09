@@ -40,10 +40,10 @@ plugin:
         images_dir: data/images
       image:
         download: true
-        timeout: 30
-        max_file_size: 20971520
+        timeout: 60
+        max_file_size: 209715200
       forward:
-        max_depth: 10
+        max_depth: 8
         parse_content: true
   plugin_whitelist: []
   plugins_dir: plugins

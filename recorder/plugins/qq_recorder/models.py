@@ -41,6 +41,9 @@ class MessageSegment(Base):
 
 class Image(Base):
     __tablename__ = "images"
+    __table_args__ = (
+        UniqueConstraint("message_id", "file_url", name="_message_file_url_uc"),
+    )
     
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"))

@@ -225,6 +225,8 @@ class QQRecorderPlugin(NcatBotPlugin):
             return [{"forward_id": fid, "depth": 0, "content_summary": ""} for fid in forward_ids]
         all_forwards = []
         for forward_id in forward_ids:
+            if not forward_id or not forward_id.strip():
+                continue
             try:
                 response = await self.api.qq.query.get_forward_msg(forward_id)
                 nodes = parse_forward_response(response, max_depth=self._settings.forward.max_depth)
@@ -245,12 +247,13 @@ class QQRecorderPlugin(NcatBotPlugin):
                     async with self.storage.AsyncSessionLocal() as session: # pyright: ignore[reportOptionalCall]
                         stmt = select(Image).where(
                             Image.message_id == message_db_id,
-                            Image.file_unique == img_info.file_unique,
+                            Image.file_url == img_info.file_url,
                         )
                         db_result = await session.execute(stmt)
                         image = db_result.scalar_one_or_none()
                         if image:
                             image.local_path = img_result.local_path
+                            image.file_unique = img_result.file_unique
                             image.downloaded = True
                             await session.commit()
                     self.logger.info("Image saved: %s (%d bytes)", img_result.local_path, img_result.file_size)
