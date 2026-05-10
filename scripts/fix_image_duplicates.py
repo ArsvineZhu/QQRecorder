@@ -81,10 +81,7 @@ def list_duplicates(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
         f"LIMIT {limit}"
     )
     rows = cur.fetchall()
-    return [
-        {"message_id": r[0], "file_url": r[1], "count": r[2]}
-        for r in rows
-    ]
+    return [{"message_id": r[0], "file_url": r[1], "count": r[2]} for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +118,9 @@ def migrate(conn: sqlite3.Connection, dry_run: bool) -> None:
                 url_preview = (g["file_url"] or "")[:50]
                 if len(url_preview) < len(g["file_url"] or ""):
                     url_preview += "..."
-                print(f"    message_id={g['message_id']}, file_url={url_preview}, x{g['count']}")
+                print(
+                    f"    message_id={g['message_id']}, file_url={url_preview}, x{g['count']}"
+                )
             if len(dup_groups) > 10:
                 print(f"    ... and {len(dup_groups) - 10} more groups")
     else:
@@ -130,7 +129,9 @@ def migrate(conn: sqlite3.Connection, dry_run: bool) -> None:
     if dry_run:
         if dup_count > 0:
             print(f"  WOULD DELETE {dup_count} duplicate rows")
-        print("  WOULD CREATE images_new table with UniqueConstraint(message_id, file_url)")
+        print(
+            "  WOULD CREATE images_new table with UniqueConstraint(message_id, file_url)"
+        )
         print("  WOULD COPY deduplicated data to images_new")
         print("  WOULD DROP images, RENAME images_new TO images")
         return
@@ -178,16 +179,13 @@ def main():
         description="Deduplicate image records and add unique constraint"
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Preview changes without applying them"
+        "--dry-run", action="store_true", help="Preview changes without applying them"
     )
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(script_dir)
-    db_path = os.path.join(
-        project_dir, "recorder", "data", "qq_recorder", "data", "recorder.db"
-    )
+    db_path = os.path.join(project_dir, "data", "qq_recorder", "data", "recorder.db")
 
     if not os.path.isfile(db_path):
         print(f"Database not found: {db_path}")

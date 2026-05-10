@@ -1,0 +1,28 @@
+line-length = 88
+indent-width = 4
+
+[lint]
+# Enable Pyflakes codes (F) and flake8-bugbear (B) by default
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # Pyflakes
+  "B",   # flake8-bugbear
+  "I",   # isort
+  "C",   # flake8-comprehensions
+  "UP",  # pyupgrade
+]
+
+# Ignore some rules that we don't need
+ignore = [
+  # Allow print statements in scripts
+  "T201",
+  "T203",
+]
+
+[format]
+# Quote style: single or double
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

@@ -28,3 +28,8 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/Arsvinezhu/QQRecorder"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.409",
+]

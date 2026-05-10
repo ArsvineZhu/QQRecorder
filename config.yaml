@@ -1,13 +1,55 @@
-bot_uin: '3644596926'
-root: '2162371684'
-debug: false
 adapters:
-- type: ai
-  platform: ai
+- config:
+    enable_webui: true
+    webui_token: R3wJfA6WyLN.LpxK
+    webui_uri: http://localhost:6099
+    ws_token: napcat_ws
+    ws_uri: ws://localhost:3001
   enabled: true
-  config: {}
+  platform: qq
+  type: napcat
+bot_uin: '3644596926'
+check_ncatbot_update: true
+debug: false
+enable_webui_interaction: true
+logging:
+  event_log_format: summary
+  event_log_levels:
+    meta_event: NONE
 plugin:
-  plugins_dir: plugins
+  auto_install_pip_deps: true
+  builtin_commands:
+    config_toggle: true
+    load: true
+    reload: true
+    sysinfo: true
+    unload: true
+  builtin_commands_group_allowed: false
+  enable_builtin_commands: true
+  hot_reload: true
   load_plugin: true
-  plugin_whitelist: []
   plugin_blacklist: []
+  plugin_configs:
+    qq_recorder:
+      monitor_all: false
+      targets:
+        groups: ["1072706649"]
+        private: ["2162371684"]
+      storage:
+        database: data/recorder.db
+        images_dir: data/images
+      image:
+        download: true
+        timeout: 60
+        max_file_size: 209715200
+      forward:
+        max_depth: 8
+        parse_content: true
+  plugin_whitelist: []
+  plugins_dir: plugins
+  skip_pip_install_confirm: false
+root: '2162371684'
+skip_napcat_install_confirm: false
+skip_ncatbot_install_check: false
+websocket_timeout: 15
+

@@ -38,8 +38,7 @@ def escape_text(text: str) -> str:
     if not text:
         return text
     return (
-        text
-        .replace("\r\n", "\\n")
+        text.replace("\r\n", "\\n")
         .replace("\r", "\\n")
         .replace("\n", "\\n")
         .replace("\t", "\\t")
@@ -63,7 +62,9 @@ TEXT_COLUMNS = [
 ]
 
 
-def scan_table(conn: sqlite3.Connection, table: str, column: str) -> list[tuple[int, str, str]]:
+def scan_table(
+    conn: sqlite3.Connection, table: str, column: str
+) -> list[tuple[int, str, str]]:
     """Find rows where the column contains unescaped control characters.
 
     Returns list of (row_id, current_value, escaped_value).
@@ -105,7 +106,9 @@ def fix_table(
         action = "WOULD FIX" if dry_run else "FIXED"
 
         # Show a short preview of the change
-        old_preview = old_val.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        old_preview = (
+            old_val.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        )
         if len(old_preview) > 60:
             old_preview = old_preview[:57] + "..."
         new_preview = new_val
@@ -125,14 +128,13 @@ def main():
         description="Escape newline/carriage-return/tab characters in stored text fields"
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Preview changes without applying them"
+        "--dry-run", action="store_true", help="Preview changes without applying them"
     )
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(script_dir)
-    db_path = os.path.join(project_dir, "recorder", "data", "qq_recorder", "data", "recorder.db")
+    db_path = os.path.join(project_dir, "data", "qq_recorder", "data", "recorder.db")
 
     if not os.path.isfile(db_path):
         print(f"Database not found: {db_path}")

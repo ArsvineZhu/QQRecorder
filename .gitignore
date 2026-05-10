@@ -33,16 +33,16 @@ logs/
 *.log
 
 # Runtime data (database & images)
-recorder/data/
+data/
 
 # Environment variables
 .env
 .env.*
 
 # Napcat
-recorder/napcat/
-recorder/docs/
-recorder/.agents/
+napcat/
+docs/
+.agents/
 
 # Lock files (optional - uncomment if you want to track uv.lock)
 # uv.lock

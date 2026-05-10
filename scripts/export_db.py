@@ -31,6 +31,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 # Text normalisation (handle both pre- and post-migration data)
 # ---------------------------------------------------------------------------
 
+
 def _normalize_text(text: str) -> str:
     """Normalize text for safe display/export by ensuring newlines are escaped.
 
@@ -42,18 +43,14 @@ def _normalize_text(text: str) -> str:
         return text
     # Unescape: convert stored \n → actual newline (handles new escaped data)
     # Then escape: convert actual newline → \n (handles old unescaped data)
-    unescaped = (
-        text
-        .replace("\\n", "\n")
-        .replace("\\t", "\t")
-    )
+    unescaped = text.replace("\\n", "\n").replace("\\t", "\t")
     return (
-        unescaped
-        .replace("\r\n", "\\n")
+        unescaped.replace("\r\n", "\\n")
         .replace("\r", "\\n")
         .replace("\n", "\\n")
         .replace("\t", "\\t")
     )
+
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -61,9 +58,7 @@ def _normalize_text(text: str) -> str:
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
-DEFAULT_DB = os.path.join(
-    PROJECT_DIR, "recorder", "data", "qq_recorder", "data", "recorder.db"
-)
+DEFAULT_DB = os.path.join(PROJECT_DIR, "data", "qq_recorder", "data", "recorder.db")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,7 +157,15 @@ def _fmt_cell(value, col_name: str, max_len=40) -> str:
 
 
 # Column name patterns that suggest free-form text — move these to the end and don't truncate
-_TEXT_COL_PATTERNS = ("raw_message", "message", "content", "text", "description", "body", "summary")
+_TEXT_COL_PATTERNS = (
+    "raw_message",
+    "message",
+    "content",
+    "text",
+    "description",
+    "body",
+    "summary",
+)
 
 
 def _is_text_col(col_name: str) -> bool:
@@ -240,7 +243,9 @@ def cmd_summary(conn, _args):
             print(f"    {cr[0]}: {cr[1]} messages")
 
     # Image stats
-    cur.execute("SELECT COUNT(*), SUM(CASE WHEN downloaded THEN 1 ELSE 0 END) FROM images")
+    cur.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN downloaded THEN 1 ELSE 0 END) FROM images"
+    )
     r = cur.fetchone()
     if r[0]:
         print(f"\n  Images: {r[0]} total, {r[1]} downloaded, {r[0] - r[1]} pending")
@@ -275,12 +280,15 @@ def cmd_schema(conn, _args):
         headers = ["Column", "Type", "Nullable", "Default", "PK"]
         rows = []
         for c in cols:
-            rows.append([
-                c[1], c[2],
-                "YES" if not c[3] else "NO",
-                str(c[4]) if c[4] is not None else "",
-                "PK" if c[5] else "",
-            ])
+            rows.append(
+                [
+                    c[1],
+                    c[2],
+                    "YES" if not c[3] else "NO",
+                    str(c[4]) if c[4] is not None else "",
+                    "PK" if c[5] else "",
+                ]
+            )
         _print_table(headers, rows, f"{t} ({count} rows)")
 
         # Foreign keys
@@ -322,7 +330,9 @@ def cmd_table(conn, args):
     limit = args.limit
 
     cur = conn.cursor()
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+    cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+    )
     if not cur.fetchone():
         print(f"Error: table '{table_name}' not found")
         print(f"Available tables: {', '.join(_get_table_names(conn))}")
@@ -349,12 +359,16 @@ def cmd_table(conn, args):
         display_row = []
         for idx in display_order:
             if idx in text_indices:
-                display_row.append(_normalize_text(str(row[idx])) if row[idx] is not None else "-")
+                display_row.append(
+                    _normalize_text(str(row[idx])) if row[idx] is not None else "-"
+                )
             else:
                 display_row.append(_fmt_cell(row[idx], col_names[idx]))
         display_rows.append(display_row)
 
-    _print_table(ordered_names, display_rows, f"{table_name} (showing {len(rows)}/{total} rows)")
+    _print_table(
+        ordered_names, display_rows, f"{table_name} (showing {len(rows)}/{total} rows)"
+    )
     print()
 
 
@@ -404,12 +418,18 @@ def cmd_messages(conn, args):
             flags.append("fwd")
         if r[10]:
             flags.append("@")
-        display_rows.append([
-            str(r[0]), r[1], r[2],
-            r[3] or "-", r[4], _fmt_ts(r[5]),
-            ",".join(flags) if flags else "-",
-            _normalize_text(str(r[6])) if r[6] is not None else "-",
-        ])
+        display_rows.append(
+            [
+                str(r[0]),
+                r[1],
+                r[2],
+                r[3] or "-",
+                r[4],
+                _fmt_ts(r[5]),
+                ",".join(flags) if flags else "-",
+                _normalize_text(str(r[6])) if r[6] is not None else "-",
+            ]
+        )
 
     _print_table(headers, display_rows, f"Messages (showing {len(rows)}/{total})")
     print()
@@ -456,12 +476,17 @@ def cmd_images(conn, args):
         dims = f"{r[5]}x{r[6]}" if r[5] and r[6] else "-"
         chat = r[7] or "?"
         chat_id = r[8] or r[9] or "?"
-        display_rows.append([
-            str(r[0]), str(r[1]), size_str,
-            "Y" if r[3] else "N",
-            _truncate(path_str, 40), dims,
-            f"{chat}:{chat_id}",
-        ])
+        display_rows.append(
+            [
+                str(r[0]),
+                str(r[1]),
+                size_str,
+                "Y" if r[3] else "N",
+                _truncate(path_str, 40),
+                dims,
+                f"{chat}:{chat_id}",
+            ]
+        )
 
     _print_table(headers, display_rows, f"Images (showing {len(rows)}/{total})")
     print()
@@ -490,7 +515,12 @@ def cmd_export(conn, args):
                 # Normalize text fields to ensure consistent newline escaping
                 if isinstance(val, str) and _is_text_col(col):
                     val = _normalize_text(val)
-                elif isinstance(val, str) and len(val) >= 10 and "20" in val[:4] and "-" in val[4:5]:
+                elif (
+                    isinstance(val, str)
+                    and len(val) >= 10
+                    and "20" in val[:4]
+                    and "-" in val[4:5]
+                ):
                     try:
                         dt = datetime.strptime(val, "%Y-%m-%d %H:%M:%S.%f")
                         val = dt.isoformat()
@@ -558,14 +588,18 @@ def cmd_search(conn, args):
     headers = ["ID", "User", "Group", "Time", "Content"]
     display_rows = []
     for r in rows:
-        display_rows.append([
-            str(r[0]), r[2], r[3] or "-",
-            _fmt_ts(r[5]), _normalize_text(str(r[6])) if r[6] is not None else "-",
-        ])
+        display_rows.append(
+            [
+                str(r[0]),
+                r[2],
+                r[3] or "-",
+                _fmt_ts(r[5]),
+                _normalize_text(str(r[6])) if r[6] is not None else "-",
+            ]
+        )
 
     _print_table(
-        headers, display_rows,
-        f'Search "{keyword}" ({len(rows)}/{total} results)'
+        headers, display_rows, f'Search "{keyword}" ({len(rows)}/{total} results)'
     )
     print()
 
@@ -590,8 +624,7 @@ def cmd_stats(conn, _args):
     groups = cur.fetchall()
     headers = ["Group ID", "Messages", "With Img", "First", "Last"]
     rows = [
-        [r[0], str(r[1]), str(r[2] or 0), _fmt_ts(r[3]), _fmt_ts(r[4])]
-        for r in groups
+        [r[0], str(r[1]), str(r[2] or 0), _fmt_ts(r[3]), _fmt_ts(r[4])] for r in groups
     ]
     _print_table(headers, rows, "Group Chat Statistics")
 
@@ -683,12 +716,16 @@ def main():
         description="QQRecorder database export & inspection tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--db", default=DEFAULT_DB, help=f"Database path (default: {DEFAULT_DB})")
+    parser.add_argument(
+        "--db", default=DEFAULT_DB, help=f"Database path (default: {DEFAULT_DB})"
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # summary
-    sub = subparsers.add_parser("summary", help="Overview: table row counts, date range")
+    sub = subparsers.add_parser(
+        "summary", help="Overview: table row counts, date range"
+    )
 
     # schema
     sub = subparsers.add_parser("schema", help="Full table schema")
@@ -697,33 +734,55 @@ def main():
     sub = subparsers.add_parser("help", help="Show this help message")
 
     # table
-    sub = subparsers.add_parser("table", help="Dump rows from a table (no args = list tables)")
-    sub.add_argument("table", nargs="?", default=None, help="Table name (omit to list available tables)")
-    sub.add_argument("limit", nargs="?", type=int, default=20, help="Row limit (default: 20)")
+    sub = subparsers.add_parser(
+        "table", help="Dump rows from a table (no args = list tables)"
+    )
+    sub.add_argument(
+        "table",
+        nargs="?",
+        default=None,
+        help="Table name (omit to list available tables)",
+    )
+    sub.add_argument(
+        "limit", nargs="?", type=int, default=20, help="Row limit (default: 20)"
+    )
 
     # messages
     sub = subparsers.add_parser("messages", help="Messages with joined data")
     sub.add_argument("--chat", choices=["group", "private"], help="Filter by chat type")
     sub.add_argument("--id", help="Filter by group_id or user_id")
-    sub.add_argument("-n", "--limit", type=int, default=20, help="Row limit (default: 20)")
+    sub.add_argument(
+        "-n", "--limit", type=int, default=20, help="Row limit (default: 20)"
+    )
 
     # images
     sub = subparsers.add_parser("images", help="Image records")
     sub.add_argument("--downloaded", action="store_true", help="Only downloaded images")
-    sub.add_argument("--missing", action="store_true", help="Only missing/undownloaded images")
-    sub.add_argument("-n", "--limit", type=int, default=20, help="Row limit (default: 20)")
+    sub.add_argument(
+        "--missing", action="store_true", help="Only missing/undownloaded images"
+    )
+    sub.add_argument(
+        "-n", "--limit", type=int, default=20, help="Row limit (default: 20)"
+    )
 
     # search
     sub = subparsers.add_parser("search", help="Full-text search in raw_message")
     sub.add_argument("keyword", help="Search keyword")
-    sub.add_argument("-n", "--limit", type=int, default=20, help="Result limit (default: 20)")
+    sub.add_argument(
+        "-n", "--limit", type=int, default=20, help="Result limit (default: 20)"
+    )
 
     # stats
     sub = subparsers.add_parser("stats", help="Per-chat statistics")
 
     # export
     sub = subparsers.add_parser("export", help="Export entire DB as JSON/CSV")
-    sub.add_argument("--format", choices=["json", "csv"], default="json", help="Export format (default: json)")
+    sub.add_argument(
+        "--format",
+        choices=["json", "csv"],
+        default="json",
+        help="Export format (default: json)",
+    )
     sub.add_argument("--output", "-o", help="Output file path (default: stdout)")
 
     args = parser.parse_args()

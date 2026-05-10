@@ -65,13 +65,16 @@ def scan_images(images_dir: str) -> list[dict]:
 
             actual_ext = detect_format(header)
 
-            results.append({
-                "filepath": filepath,
-                "filename": fname,
-                "current_ext": current_ext_lower,
-                "actual_ext": actual_ext,
-                "mismatch": bool(actual_ext) and actual_ext != EXT_MAP.get(current_ext_lower, ""),
-            })
+            results.append(
+                {
+                    "filepath": filepath,
+                    "filename": fname,
+                    "current_ext": current_ext_lower,
+                    "actual_ext": actual_ext,
+                    "mismatch": bool(actual_ext)
+                    and actual_ext != EXT_MAP.get(current_ext_lower, ""),
+                }
+            )
     return results
 
 
@@ -109,7 +112,9 @@ def fix_database(db_path: str, renames: list[tuple[str, str]], dry_run: bool) ->
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    cur.execute("SELECT id, local_path FROM images WHERE downloaded = 1 AND local_path IS NOT NULL")
+    cur.execute(
+        "SELECT id, local_path FROM images WHERE downloaded = 1 AND local_path IS NOT NULL"
+    )
     rows = cur.fetchall()
 
     updated = 0
@@ -124,7 +129,9 @@ def fix_database(db_path: str, renames: list[tuple[str, str]], dry_run: bool) ->
                 )
             updated += 1
             action = "WOULD UPDATE" if dry_run else "UPDATED"
-            print(f"  {action} DB id={row_id}: {os.path.basename(local_path)} -> {os.path.basename(new_path)}")
+            print(
+                f"  {action} DB id={row_id}: {os.path.basename(local_path)} -> {os.path.basename(new_path)}"
+            )
 
     if not dry_run:
         conn.commit()
@@ -133,13 +140,17 @@ def fix_database(db_path: str, renames: list[tuple[str, str]], dry_run: bool) ->
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fix image file extensions based on magic bytes")
-    parser.add_argument("--dry-run", action="store_true", help="Preview changes without applying them")
+    parser = argparse.ArgumentParser(
+        description="Fix image file extensions based on magic bytes"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Preview changes without applying them"
+    )
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(script_dir)
-    data_dir = os.path.join(project_dir, "recorder", "data", "qq_recorder", "data")
+    data_dir = os.path.join(project_dir, "data", "qq_recorder", "data")
     images_dir = os.path.join(data_dir, "images")
     db_path = os.path.join(data_dir, "recorder.db")
 
@@ -180,7 +191,9 @@ def main():
     print()
     print("Mismatched files:")
     for m in mismatches:
-        print(f"    {m['filename']}  (current: {m['current_ext']}, actual: .{m['actual_ext']})")
+        print(
+            f"    {m['filename']}  (current: {m['current_ext']}, actual: .{m['actual_ext']})"
+        )
 
     # Step 2: Fix files
     print()
