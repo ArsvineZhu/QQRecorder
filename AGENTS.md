@@ -7,7 +7,7 @@
 
 ## OVERVIEW
 
-Silent QQ message recorder built on NcatBot framework. Records group/private chat messages to SQLite with image download, forward parsing, sticker detection, and command-based querying. Python 3.12+, async throughout. **No build system, no CI/CD, no console_scripts entry points** — run exclusively via `uv run ncatbot run` as an NcatBot plugin.
+Silent QQ message recorder built on NcatBot framework. Records group/private chat messages to SQLite with image download, forward parsing, sticker detection, app share parsing, and command-based querying. Python 3.12+, async throughout. Run exclusively via `uv run ncatbot run` as an NcatBot plugin.
 
 ## STRUCTURE
 
@@ -48,6 +48,8 @@ QQRecorder/
 | Add/modify sticker detection | `plugins/qq_recorder/sticker_detector.py` | 3-layer cascade: metadata → text → heuristics |
 | Forward message parsing | `plugins/qq_recorder/forward_parser.py` | Recursive forward node parsing |
 | Text escaping/unescaping | `plugins/qq_recorder/text_utils.py` | Control char escape for DB storage |
+| Add/modify app share parsing | `plugins/qq_recorder/message_parser.py` | extract_app_shares() → AppShareInfo (JSON/app segments) |
+| App share DB schema | `plugins/qq_recorder/models.py` | AppShare: app_name, title, description, url, prompt, raw_data |
 | Adjust plugin config | Root `config.yaml` | `plugin.plugin_configs.qq_recorder` |
 | Inspect recorded data | `scripts/export_db.py` | 8 subcommands (summary, search, export…) |
 | Run data migrations | `scripts/fix_*.py`, `scripts/migrate_*.py`, `scripts/backfill_*.py` | All support `--dry-run` |
@@ -70,6 +72,7 @@ QQRecorder/
 | `detect_extension()` | function | `plugins/qq_recorder/image_handler.py` | 3-layer cascade → file extension |
 | `build_config()` | function | `plugins/qq_recorder/config.py` | Config defaults + validation |
 | `parse_forward_response()` | function | `plugins/qq_recorder/forward_parser.py` | Recursive forward node parsing |
+| `extract_app_shares()` | function | `plugins/qq_recorder/message_parser.py` | JSON segment → AppShareInfo (Bilibili, music, maps, etc.) |
 
 ## CONVENTIONS
 
@@ -89,6 +92,8 @@ QQRecorder/
 - **CLI script convention**: All scripts use `argparse` + `--dry-run` flag + `if __name__ == "__main__"` guard.
 - **Sticker detection**: Invoked inside `extract_images()` in message_parser.py — no separate pipeline step. Confidence ≥ 0.7 → sticker.
 - **Config is single-file**: Root `config.yaml` holds both NcatBot framework config and plugin config under `plugin.plugin_configs.qq_recorder`.
+- **Pre-commit hooks**: `.pre-commit-config.yaml` runs `ruff check` + `ruff format --check` on `git commit`. Run `pre-commit install` once after clone.
+- **App share parsing**: `extract_app_shares()` in message_parser.py handles JSON segments — parses QQ mini-program, rich media, location shares. HTML entities (`&#44;`) are decoded via `html.unescape()`.
 
 ## ANTI-PATTERNS (THIS PROJECT)
 
@@ -134,6 +139,7 @@ python scripts/fix_image_extensions.py --dry-run
 python scripts/fix_newline_escaping.py --dry-run
 python scripts/fix_image_duplicates.py --dry-run
 python scripts/migrate_add_is_sticker.py --dry-run
+python scripts/migrate_add_app_share.py --dry-run
 python scripts/backfill_sticker_flags.py --dry-run
 python scripts/backfill_sticker_flags.py --start-id 100 --end-id 200  # Batch backfill
 ```

@@ -1,14 +1,15 @@
 # QQRecorder Plugin
 
-NcatBot plugin that silently records QQ group/private messages to SQLite with image download, forward parsing, and sticker detection. 13 source files, 1 test file. Python 3.12+, async throughout.
+NcatBot plugin that silently records QQ group/private messages to SQLite with image download, forward parsing, sticker detection, and app share parsing. 13 source files, 1 test file. Python 3.12+, async throughout.
 
 ## DATA FLOW
 
 ```
 NcatBot Event → events.event_to_dict() → processors.MessageProcessor.process_message()
   ├─ config.is_chat_monitored() → filter
-  ├─ message_parser.parse_message(raw_message) → ParsedMessage (images, replies, forwards, ats)
-  │   └─ extract_images() → sticker_detector.combined_detection() → ImageInfo(is_sticker, sticker_confidence)
+  ├─ message_parser.parse_message(raw_message) → ParsedMessage (images, replies, forwards, ats, app_shares)
+  │   ├─ extract_images() → sticker_detector.combined_detection() → ImageInfo(is_sticker, sticker_confidence)
+  │   └─ extract_app_shares() → HTML unescape → JSON parse → AppShareInfo
   ├─ forward_parser: api.qq.get_forward_msg() → parse_forward_response() → flatten_forward_nodes()
   ├─ storage.save_message() → Message + related records in SQLite
   └─ image_handler.process_images() → download → detect extension → save → update DB
@@ -46,9 +47,9 @@ plugins/qq_recorder/
 | `commands.py` | Command handling: stats/recent/search subcommands | `CommandHandler`, `get_chat_info()`, `format_message_brief()` |
 | `processors.py` | Message processing pipeline: message/forward/image handling | `MessageProcessor` |
 | `config.py` | Config models + validation + monitoring check | `RecorderSettings`, `is_chat_monitored()` |
-| `models.py` | SQLAlchemy ORM schema | `Message`, `Image`, `ForwardMessage`, `Reply`, `AtMention` |
+| `models.py` | SQLAlchemy ORM schema | `Message`, `Image`, `ForwardMessage`, `Reply`, `AtMention`, `AppShare` |
 | `storage.py` | Async DB operations | `MessageStorage` |
-| `message_parser.py` | Segment parsing (text/image/at/reply/forward) | `parse_message()`, `ParsedMessage`, `ImageInfo` |
+| `message_parser.py` | Segment parsing (text/image/at/reply/forward/json) | `parse_message()`, `ParsedMessage`, `ImageInfo`, `AppShareInfo`, `extract_app_shares()` |
 | `image_handler.py` | Download, format detect, save | `process_images()`, `detect_extension()` |
 | `forward_parser.py` | Recursive forward node parsing | `parse_forward_response()`, `ForwardNode` |
 | `sticker_detector.py` | 3-layer sticker detection cascade | `combined_detection()`, `detect_by_metadata()`, `detect_by_text()`, `detect_by_heuristics()` |
@@ -65,6 +66,8 @@ plugins/qq_recorder/
 - **Sticker detection order**: sub_type metadata (primary, 0.95) → CQ码 text pattern (0.95) → heuristic format+size (0.7-0.85). Combined confidence ≥ 0.7 marks as sticker.
 - **Sticker detection invoked in parse**: `extract_images()` in `message_parser.py` calls `combined_detection()` — no separate step in the pipeline.
 - **Event immutability**: Never modify event objects in-place — always convert to dict first via `event_to_dict()`.
+- **JSON segment types**: `"json"` type added to `ALLOWED_SEGMENT_TYPES`. App share data stored in two places: raw segment in `message_segments`, structured metadata in `app_shares`.
+- **App share parsing**: `extract_app_shares()` handles 3 meta-subkey formats (`detail_1`, `news`, `Location.Search`). CQ code HTML entities (`&#44;`) decoded via `html.unescape()` before JSON parsing.
 
 ## ANTI-PATTERNS (THIS PLUGIN)
 
@@ -88,5 +91,5 @@ plugins/qq_recorder/
 - `sub_type=1` in CQ码 raw_message (e.g., `[CQ:image,sub_type=1,...]`) can also be detected via regex on raw_message string — this catches cases where segment_data parsing loses the field.
 - `is_sticker` defaults to `False` (0) for all records — only explicitly set to `True` when confidence ≥ 0.7. Backfilled records have confidence 0.95 when detected via metadata/text, 0.5-0.85 when detected via heuristics.
 - The `face` segment type is a separate QQ emoji system, NOT related to image-type stickers — do not conflate `face` segments with `image` sticker detection.
-- Plugin version is declared in both `plugin.py` (`version = "1.3.1"`) and `manifest.toml` (`version = "1.3.1"`) — keep them in sync.
+- Plugin version is declared in both `plugin.py` (`version = "1.3.2"`) and `manifest.toml` (`version = "1.3.2"`) — keep them in sync.
 - Tests: `uv run pytest plugins/qq_recorder/tests/` — only 8 unit tests for sticker_detector.py. No conftest, fixtures, or mocks.

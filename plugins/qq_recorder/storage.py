@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from .models import (
+    AppShare,
     AtMention,
     Base,
     ForwardMessage,
@@ -49,6 +50,7 @@ class MessageStorage:
                     has_reply=len(message_data.get("replies", [])) > 0,
                     has_forward=len(message_data.get("forward_messages", [])) > 0,
                     has_at=len(message_data.get("at_mentions", [])) > 0,
+                    has_app_share=len(message_data.get("app_shares", [])) > 0,
                 )
                 session.add(message)
                 await session.flush()
@@ -105,6 +107,18 @@ class MessageStorage:
                         message_id=message.id, target_user_id=at["target_user_id"]
                     )
                     session.add(at_obj)
+
+                for share in message_data.get("app_shares", []):
+                    share_obj = AppShare(
+                        message_id=message.id,
+                        app_name=share.get("app_name", ""),
+                        title=share.get("title", ""),
+                        description=share.get("description", ""),
+                        url=share.get("url", ""),
+                        prompt=share.get("prompt", ""),
+                        raw_data=share.get("raw_data", ""),
+                    )
+                    session.add(share_obj)
 
                 await session.commit()
                 return message.id

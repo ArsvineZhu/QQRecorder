@@ -33,6 +33,7 @@ class Message(Base):
     has_reply: Mapped[bool] = mapped_column(Boolean, default=False)
     has_forward: Mapped[bool] = mapped_column(Boolean, default=False)
     has_at: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_app_share: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
     segments: Mapped[list["MessageSegment"]] = relationship(
@@ -52,6 +53,9 @@ class Message(Base):
     )
     at_mentions: Mapped[list["AtMention"]] = relationship(
         "AtMention", back_populates="message", cascade="all, delete-orphan"
+    )
+    app_shares: Mapped[list["AppShare"]] = relationship(
+        "AppShare", back_populates="message", cascade="all, delete-orphan"
     )
 
 
@@ -131,6 +135,21 @@ class AtMention(Base):
     target_user_id: Mapped[str] = mapped_column(String, nullable=False)
 
     message: Mapped["Message"] = relationship("Message", back_populates="at_mentions")
+
+
+class AppShare(Base):
+    __tablename__ = "app_shares"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"))
+    app_name: Mapped[str] = mapped_column(String, default="")
+    title: Mapped[str] = mapped_column(String, default="")
+    description: Mapped[str] = mapped_column(String, default="")
+    url: Mapped[str] = mapped_column(String, default="")
+    prompt: Mapped[str] = mapped_column(String, default="")
+    raw_data: Mapped[str] = mapped_column(Text, default="")
+
+    message: Mapped["Message"] = relationship("Message", back_populates="app_shares")
 
 
 class MonitoredChat(Base):

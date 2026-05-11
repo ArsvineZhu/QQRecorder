@@ -13,6 +13,7 @@
 - **合并转发解析** — 递归解析合并转发消息，支持自定义最大深度
 - **消息搜索** — 内置关键词搜索与最近消息查询
 - **表情识别** — 自动区分普通图片与动画表情/贴纸，支持三重检测（字段、文本、启发式）和历史数据回溯
+- **应用分享识别** — 自动识别 QQ 小程序、图文分享、位置分享等 JSON 格式消息（B站视频、网易云音乐等）并解析结构化元数据
 - **统计面板** — 查看消息数、图片数等统计信息
 - **灵活配置** — 支持全量监控或指定群/私聊监控
 - **异步存储** — 基于 SQLAlchemy + aiosqlite 的异步数据库，不阻塞消息处理
@@ -145,7 +146,9 @@ QQRecorder/
 │   ├── fix_newline_escaping.py # 换行符转义修复工具（v1.1.3 迁移用）
 │   ├── fix_image_duplicates.py # 图片重复记录修复工具（v1.2.4 迁移用）
 │   ├── migrate_add_is_sticker.py  # 表情检测数据库迁移（v1.3.0）
+│   ├── migrate_add_app_share.py # 应用分享数据库迁移（v1.3.2）
 │   └── backfill_sticker_flags.py  # 历史图片表情标记回填（v1.3.0）
+├── .pre-commit-config.yaml     # Git pre-commit 钩子（ruff check + format）
 └── recorder/
     ├── config.yaml             # 插件运行配置
     ├── napcat/                 # NapCat 协议端（第三方组件，请勿修改）
@@ -268,6 +271,18 @@ python scripts/fix_image_duplicates.py --dry-run
 python scripts/fix_image_duplicates.py
 ```
 
+### migrate_add_app_share.py
+
+v1.3.2 应用分享数据库迁移工具。为 `messages` 表添加 `has_app_share` 布尔列，创建 `app_shares` 表用于存储 QQ 小程序、图文分享、位置分享等 JSON 格式消息的结构化元数据。
+
+```bash
+# 预览修改（不实际执行）
+python scripts/migrate_add_app_share.py --dry-run
+
+# 执行迁移
+python scripts/migrate_add_app_share.py
+```
+
 ## 数据模型
 
 | 表名 | 说明 |
@@ -275,6 +290,7 @@ python scripts/fix_image_duplicates.py
 | `messages` | 消息主表：消息ID、发送者、时间、原始内容、类型标记 |
 | `message_segments` | 消息段：文本、图片、@、回复等分段数据 |
 | `images` | 图片记录：URL、本地路径、尺寸、下载状态、是否表情、置信度 |
+| `app_shares` | 应用分享：应用名称、标题、描述、链接、原始JSON数据 |
 | `replies` | 回复关系：关联原消息ID |
 | `forward_messages` | 合并转发：支持树形嵌套结构 |
 | `at_mentions` | @提及记录 |
@@ -344,6 +360,25 @@ python scripts/fix_image_extensions.py            # 执行
 最终置信度 ≥ 0.7 则标记为表情，存储在 `images.is_sticker` 字段。
 
 ## 更新日志
+
+### v1.3.2
+
+- **新增**：QQ 应用分享消息（JSON 格式）的解析与存储，支持识别三种类型：
+  - QQ 小程序卡片（B站等）— 提取标题、链接
+  - QQ 图文分享（豆包AI视频等）— 提取标题、来源链接
+  - QQ 位置分享 — 提取位置描述
+- **新增**：`AppShare` 数据表（app_name、title、description、url、prompt、raw_data）
+- **新增**：`scripts/migrate_add_app_share.py` — 为 messages 表添加 `has_app_share` 列并创建 app_shares 表
+- **增强**：消息日志格式显示分享来源，如 `[share(QQ图文)]`
+- **变更**：`messages` 数据模型新增 `has_app_share`（布尔）字段
+
+### v1.3.1
+
+- **配置规范化**：将 `ruff` 从运行时依赖移至开发依赖；修正 `authors` 字段符合 PEP 621；移除被 `license` 字段取代的许可证分类器
+- **类型检查清理**：移除 `storage.py`（22处）、`image_handler.py`（6处）、`scripts/`（2处）中的 `# pyright: ignore` 抑制注释，改用正确的类型注解
+- **代码质量**：全项目 Ruff 检查通过（65处自动修复 + 35处手动修复），统一代码格式
+- **新增**：`pre-commit` 开发依赖与 `.pre-commit-config.yaml`，提交时自动运行 `ruff check` + `ruff format`
+- **文档**：全面刷新根目录和插件级 `AGENTS.md` 知识库，新增代码映射、命令速查
 
 ### v1.3.0
 

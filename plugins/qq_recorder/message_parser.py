@@ -1,3 +1,4 @@
+import html
 import json
 from dataclasses import dataclass
 
@@ -24,20 +25,34 @@ class AtInfo:
 
 
 @dataclass
+class AppShareInfo:
+    """Parsed metadata from a QQ JSON/app share segment (Bilibili, NetEase, etc.)."""
+
+    app_name: str = ""
+    title: str = ""
+    description: str = ""
+    url: str = ""
+    prompt: str = ""
+    raw_data: str = ""
+
+
+@dataclass
 class ParsedMessage:
     text: str
     has_image: bool
     has_reply: bool
     has_forward: bool
     has_at: bool
+    has_app_share: bool
     segments: list[dict]
     images: list[ImageInfo]
     replies: list[ReplyInfo]
     at_mentions: list[AtInfo]
     forward_ids: list[str]
+    app_shares: list[AppShareInfo]
 
 
-ALLOWED_SEGMENT_TYPES = {"text", "image", "at", "reply", "forward", "face"}
+ALLOWED_SEGMENT_TYPES = {"text", "image", "at", "reply", "forward", "face", "json"}
 
 
 def extract_text(segments: list[dict]) -> str:
@@ -105,6 +120,90 @@ def extract_forward_ids(segments: list[dict]) -> list[str]:
     return forward_ids
 
 
+def extract_app_shares(segments: list[dict]) -> list[AppShareInfo]:
+    """Extract metadata from QQ JSON/app share segments.
+
+    Handles multiple QQ app share types:
+    - com.tencent.structmsg (mini-program / 小程序)
+    - com.tencent.tuwen.lua (rich media / 图文分享)
+    - com.tencent.map (location share / 位置分享)
+    - com.tencent.music (music / 音乐分享)
+    """
+    app_shares = []
+    for seg in segments:
+        if seg["type"] != "json":
+            continue
+        try:
+            data = seg.get("data", {})
+            data_str = data.get("data", "")
+            if not data_str:
+                continue
+            # CQ code may HTML-encode special chars (&#44; = comma, etc.)
+            decoded = html.unescape(data_str)
+            obj = json.loads(decoded)
+
+            # Extract app name: use desc, fall back to app package name
+            app_name = obj.get("desc", "") or _extract_app_label(obj.get("app", ""))
+
+            # Try multiple meta sub-keys for structured title/url
+            meta = obj.get("meta", {})
+            title = ""
+            description = ""
+            url = ""
+
+            for key in ("detail_1", "news", "music", "Location.Search"):
+                if key in meta:
+                    detail = meta[key]
+                    title = detail.get("title", "") or detail.get("name", "")
+                    description = detail.get("desc", "")
+                    url = (
+                        detail.get("qqdocurl", "")
+                        or detail.get("url", "")
+                        or detail.get("jumpUrl", "")
+                    )
+                    if title or url:
+                        break
+
+            # Fallback: use prompt as title
+            prompt = obj.get("prompt", "")
+            if not title:
+                title = prompt
+
+            app_shares.append(
+                AppShareInfo(
+                    app_name=app_name,
+                    title=title,
+                    description=description,
+                    url=url,
+                    prompt=prompt,
+                    raw_data=data_str,
+                )
+            )
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            # Bare minimum: store raw data even if parsing fails
+            app_shares.append(
+                AppShareInfo(raw_data=seg.get("data", {}).get("data", ""))
+            )
+    return app_shares
+
+
+def _extract_app_label(app_package: str) -> str:
+    """Extract a human-readable label from an Android package name."""
+    if not app_package:
+        return ""
+    # Known package names
+    KNOWN = {
+        "com.tencent.map": "QQ位置",
+        "com.tencent.tuwen.lua": "QQ图文",
+        "com.tencent.music": "QQ音乐",
+        "com.tencent.structmsg": "QQ卡片",
+    }
+    for key, label in KNOWN.items():
+        if key in app_package:
+            return label
+    return app_package.split(".")[-1] if "." in app_package else app_package
+
+
 def build_segments_data(message_segments: list[dict]) -> list[dict]:
     segments = []
     for idx, seg in enumerate(message_segments):
@@ -127,6 +226,7 @@ def parse_message(message_segments: list[dict], raw_message: str = "") -> Parsed
     replies = extract_replies(message_segments)
     at_mentions = extract_at_mentions(message_segments)
     forward_ids = extract_forward_ids(message_segments)
+    app_shares = extract_app_shares(message_segments)
     segments = build_segments_data(message_segments)
 
     return ParsedMessage(
@@ -135,9 +235,11 @@ def parse_message(message_segments: list[dict], raw_message: str = "") -> Parsed
         has_reply=len(replies) > 0,
         has_forward=len(forward_ids) > 0,
         has_at=len(at_mentions) > 0,
+        has_app_share=len(app_shares) > 0,
         segments=segments,
         images=images,
         replies=replies,
         at_mentions=at_mentions,
         forward_ids=forward_ids,
+        app_shares=app_shares,
     )

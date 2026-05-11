@@ -13,7 +13,7 @@ from .storage import MessageStorage
 
 class QQRecorderPlugin(NcatBotPlugin):
     name = "qq_recorder"
-    version = "1.3.1"
+    version = "1.3.2"
     author = "Arsvine Zhu"
     description = "静默 QQ 消息记录器"
 
@@ -23,7 +23,7 @@ class QQRecorderPlugin(NcatBotPlugin):
         self._command_handler: CommandHandler
         self._processor: MessageProcessor
 
-    async def on_load(self):
+    async def on_load(self) -> None:
         settings = build_config(self.config)
 
         db_path = settings.storage.database

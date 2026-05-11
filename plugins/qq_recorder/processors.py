@@ -81,6 +81,17 @@ class MessageProcessor:
                 "at_mentions": [
                     {"target_user_id": at.target_user_id} for at in parsed.at_mentions
                 ],
+                "app_shares": [
+                    {
+                        "app_name": share.app_name,
+                        "title": share.title,
+                        "description": share.description,
+                        "url": share.url,
+                        "prompt": share.prompt,
+                        "raw_data": share.raw_data,
+                    }
+                    for share in parsed.app_shares
+                ],
             }
 
             message_db_id = await self.storage.save_message(message_data)
