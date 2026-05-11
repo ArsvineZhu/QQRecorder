@@ -178,12 +178,31 @@ class MessageStorage:
 
     async def count_downloaded_images(
         self, chat_type: str = None, chat_id: str = None
-    ) -> int:  # pyright: ignore[reportArgumentType]
+    ) -> int:
         async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
             stmt = (
                 select(func.count(Image.id))
                 .join(Message, Image.message_id == Message.id)
                 .where(Image.downloaded == True)
+            )
+            if chat_type:
+                stmt = stmt.where(Message.chat_type == chat_type)
+            if chat_id:
+                if chat_type == "group":
+                    stmt = stmt.where(Message.group_id == chat_id)
+                else:
+                    stmt = stmt.where(Message.user_id == chat_id)
+            result = await session.execute(stmt)
+            return result.scalar_one()
+
+    async def count_stickers(
+        self, chat_type: str = None, chat_id: str = None
+    ) -> int:
+        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+            stmt = (
+                select(func.count(Image.id))
+                .join(Message, Image.message_id == Message.id)
+                .where(Image.is_sticker)
             )
             if chat_type:
                 stmt = stmt.where(Message.chat_type == chat_type)

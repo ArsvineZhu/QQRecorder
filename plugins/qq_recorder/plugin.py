@@ -13,7 +13,7 @@ from .processors import MessageProcessor
 
 class QQRecorderPlugin(NcatBotPlugin):
     name = "qq_recorder"
-    version = "1.2.4"
+    version = "1.3.0"
     author = "Arsvine Zhu"
     description = "静默 QQ 消息记录器"
 

@@ -1,7 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-05-10
-**Version:** 1.2.4
+**Generated:** 2026-05-11
+**Version:** 1.3.0
 **Author:** Arsvine Zhu
 
 ## OVERVIEW
@@ -20,7 +20,9 @@ QQRecorder/
 │   ├── export_db.py           # DB inspection/export (summary, schema, search, export)
 │   ├── fix_image_extensions.py # Migration: fix .jpg files that are actually GIF/PNG
 │   ├── fix_newline_escaping.py # Migration: fix raw newlines in DB
-│   └── fix_image_duplicates.py # Migration: dedup images + add unique constraint
+│   ├── fix_image_duplicates.py # Migration: dedup images + add unique constraint
+│   ├── migrate_add_is_sticker.py  # Migration: add is_sticker/sticker_confidence columns
+│   └── backfill_sticker_flags.py  # Backfill: detect stickers in existing image records
 └── pyproject.toml             # Dependencies: ncatbot5, sqlalchemy, aiosqlite, aiohttp
 ```
 
@@ -34,6 +36,7 @@ QQRecorder/
 | Change what gets recorded | `plugins/qq_recorder/config.py` | Targets, image/forward settings |
 | Modify DB schema | `plugins/qq_recorder/models.py` | SQLAlchemy models |
 | Fix image processing | `plugins/qq_recorder/image_handler.py` | Download, format detection, storage |
+| Add/modify sticker detection | `plugins/qq_recorder/sticker_detector.py` | 3-layer cascade: metadata → text → heuristics |
 | Adjust plugin config | Root `config.yaml` | `plugin.plugin_configs.qq_recorder` |
 | Inspect recorded data | `scripts/export_db.py` | 8 subcommands (summary, search, export…) |
 | Bot startup | `uv run ncatbot run` (from project root) | NcatBot loads plugin from plugins/ |
@@ -77,6 +80,15 @@ python scripts/fix_image_extensions.py
 # Fix image duplicates (after UniqueConstraint migration)
 python scripts/fix_image_duplicates.py --dry-run
 python scripts/fix_image_duplicates.py
+
+# Migrate DB: add sticker detection columns
+python scripts/migrate_add_is_sticker.py --dry-run
+python scripts/migrate_add_is_sticker.py
+
+# Backfill sticker flags for historical images
+python scripts/backfill_sticker_flags.py --dry-run
+python scripts/backfill_sticker_flags.py
+python scripts/backfill_sticker_flags.py --start-id 100 --end-id 200
 ```
 
 ## NOTES

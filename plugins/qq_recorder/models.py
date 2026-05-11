@@ -6,6 +6,7 @@ from sqlalchemy import (
     Text,
     Integer,
     Boolean,
+    Float,
     DateTime,
     UniqueConstraint,
 )
@@ -80,6 +81,8 @@ class Image(Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     downloaded: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_sticker: Mapped[bool] = mapped_column(Boolean, default=False)
+    sticker_confidence: Mapped[float] = mapped_column(Float, default=0.0)
 
     message: Mapped["Message"] = relationship("Message", back_populates="images")
 

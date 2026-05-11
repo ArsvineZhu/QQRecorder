@@ -12,6 +12,7 @@
 - **图片下载** — 自动下载消息中的图片，按日期归档存储，保留原始格式（JPG/PNG/GIF/WebP/BMP）
 - **合并转发解析** — 递归解析合并转发消息，支持自定义最大深度
 - **消息搜索** — 内置关键词搜索与最近消息查询
+- **表情识别** — 自动区分普通图片与动画表情/贴纸，支持三重检测（字段、文本、启发式）和历史数据回溯
 - **统计面板** — 查看消息数、图片数等统计信息
 - **灵活配置** — 支持全量监控或指定群/私聊监控
 - **异步存储** — 基于 SQLAlchemy + aiosqlite 的异步数据库，不阻塞消息处理
@@ -142,7 +143,9 @@ QQRecorder/
 │   ├── export_db.py            # 数据库导出与查询工具
 │   ├── fix_image_extensions.py # 图片格式修复工具（v1.1.2 迁移用）
 │   ├── fix_newline_escaping.py # 换行符转义修复工具（v1.1.3 迁移用）
-│   └── fix_image_duplicates.py # 图片重复记录修复工具（v1.2.4 迁移用）
+│   ├── fix_image_duplicates.py # 图片重复记录修复工具（v1.2.4 迁移用）
+│   ├── migrate_add_is_sticker.py  # 表情检测数据库迁移（v1.3.0）
+│   └── backfill_sticker_flags.py  # 历史图片表情标记回填（v1.3.0）
 └── recorder/
     ├── config.yaml             # 插件运行配置
     ├── napcat/                 # NapCat 协议端（第三方组件，请勿修改）
@@ -161,6 +164,7 @@ QQRecorder/
             ├── storage.py       # 异步数据库操作
             ├── message_parser.py # 消息段解析
             ├── image_handler.py  # 图片下载与格式检测
+            ├── sticker_detector.py # 动画表情/贴纸三重检测
             ├── forward_parser.py # 合并转发解析
             ├── text_utils.py    # 文本转义/反转义工具
             ├── manifest.toml    # NcatBot 插件清单
@@ -225,6 +229,33 @@ python scripts/fix_newline_escaping.py --dry-run
 python scripts/fix_newline_escaping.py
 ```
 
+### migrate_add_is_sticker.py
+
+v1.3.0 表情检测数据库迁移工具。此脚本为 `images` 表添加 `is_sticker`（布尔标记）和 `sticker_confidence`（置信度 0.0~1.0）列，用于存储三重检测结果。
+
+```bash
+# 预览修改（不实际执行）
+python scripts/migrate_add_is_sticker.py --dry-run
+
+# 执行迁移
+python scripts/migrate_add_is_sticker.py
+```
+
+### backfill_sticker_flags.py
+
+v1.3.0 历史图片表情标记回填工具。对数据库中已有的图片记录运行检测算法并回填 `is_sticker` 和 `sticker_confidence` 字段。
+
+```bash
+# 预览回填结果（不写入数据库）
+python scripts/backfill_sticker_flags.py --dry-run
+
+# 执行回填（所有记录）
+python scripts/backfill_sticker_flags.py
+
+# 指定 ID 范围（断点续传）
+python scripts/backfill_sticker_flags.py --start-id 100 --end-id 200
+```
+
 ### fix_image_duplicates.py
 
 v1.2.4 图片重复记录修复工具。旧版本中图片查询使用 `file_unique` 字段，但 QQ 经常返回 `"0"`，导致同一消息下多张图片产生 `MultipleResultsFound` 异常。此脚本去重并重建 images 表，添加 `(message_id, file_url)` 唯一约束。
@@ -243,7 +274,7 @@ python scripts/fix_image_duplicates.py
 |------|------|
 | `messages` | 消息主表：消息ID、发送者、时间、原始内容、类型标记 |
 | `message_segments` | 消息段：文本、图片、@、回复等分段数据 |
-| `images` | 图片记录：URL、本地路径、尺寸、下载状态 |
+| `images` | 图片记录：URL、本地路径、尺寸、下载状态、是否表情、置信度 |
 | `replies` | 回复关系：关联原消息ID |
 | `forward_messages` | 合并转发：支持树形嵌套结构 |
 | `at_mentions` | @提及记录 |
@@ -303,7 +334,26 @@ python scripts/fix_image_extensions.py --dry-run  # 预览
 python scripts/fix_image_extensions.py            # 执行
 ```
 
+**Q: 如何区分普通图片和动画表情/贴纸？**
+
+项目使用三重检测机制：
+1. **元数据检测**（主检测）— 分析 QQ 消息段中的 `sub_type` 字段：`0`=普通图片，`1`=动画表情，`7`=QQ商城贴纸，`13`=emoji 表情。置信度 0.95。
+2. **文本检测** — 在 CQ 码原始消息中匹配 `sub_type=1` 模式。置信度 0.95。
+3. **启发式检测**（回退）— 检测 GIF/WebP 格式及小文件（<100KB）。置信度 0.7-0.85。
+
+最终置信度 ≥ 0.7 则标记为表情，存储在 `images.is_sticker` 字段。
+
 ## 更新日志
+
+### v1.3.0
+
+- **新增**：动画表情/贴纸检测功能，三重检测算法（元数据 `sub_type` 字段 → CQ码文本匹配 → 启发式格式/大小）
+- **新增**：`plugins/qq_recorder/sticker_detector.py` — 检测引擎核心
+- **新增**：`plugins/qq_recorder/tests/test_sticker_detection.py` — 8 个单元测试
+- **新增**：`scripts/migrate_add_is_sticker.py` — 为 images 表添加 `is_sticker`/`sticker_confidence` 列
+- **新增**：`scripts/backfill_sticker_flags.py` — 历史图片表情标记回填脚本
+- **增强**：`stats` 命令增加表情数量统计
+- **变更**：`images` 数据模型新增 `is_sticker`（布尔）和 `sticker_confidence`（浮点）字段
 
 ### v1.2.4
 

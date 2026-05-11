@@ -52,7 +52,7 @@ class MessageProcessor:
             if is_command(raw, ("recorder", "/recorder", "r", "/r")):
                 return None
 
-            parsed = parse_message(event.get("message", []))
+            parsed = parse_message(event.get("message", []), raw)
             forward_messages = await self._process_forwards(parsed.forward_ids)
 
             message_data = {
@@ -68,6 +68,8 @@ class MessageProcessor:
                         "file_url": img.file_url,
                         "file_unique": img.file_unique,
                         "file_size": img.file_size,
+                        "is_sticker": img.is_sticker,
+                        "sticker_confidence": img.sticker_confidence,
                     }
                     for img in parsed.images
                 ],
@@ -145,6 +147,8 @@ class MessageProcessor:
                             image.local_path = img_result.local_path
                             image.file_unique = img_result.file_unique
                             image.downloaded = True
+                            image.is_sticker = img_info.is_sticker
+                            image.sticker_confidence = img_info.sticker_confidence
                             await session.commit()
                     self.logger.info(
                         "Image saved: %s (%d bytes)",

@@ -2,12 +2,16 @@ from dataclasses import dataclass
 import json
 from typing import List, Dict
 
+from .sticker_detector import combined_detection
+
 
 @dataclass
 class ImageInfo:
     file_url: str
     file_unique: str
     file_size: int
+    is_sticker: bool = False
+    sticker_confidence: float = 0.0
 
 
 @dataclass
@@ -45,7 +49,7 @@ def extract_text(segments: List[Dict]) -> str:
     return "".join(text_parts)
 
 
-def extract_images(segments: List[Dict]) -> List[ImageInfo]:
+def extract_images(segments: List[Dict], raw_message: str = "") -> List[ImageInfo]:
     images = []
     for seg in segments:
         if seg["type"] == "image":
@@ -56,7 +60,19 @@ def extract_images(segments: List[Dict]) -> List[ImageInfo]:
                 file_size = int(data.get("file_size", 0))
             except (ValueError, TypeError):
                 file_size = 0
-            images.append(ImageInfo(file_url, file_unique, file_size))
+
+            is_sticker, sticker_confidence = combined_detection(
+                raw_message=raw_message,
+                segment_data=data,
+            )
+
+            images.append(ImageInfo(
+                file_url=file_url,
+                file_unique=file_unique,
+                file_size=file_size,
+                is_sticker=is_sticker,
+                sticker_confidence=sticker_confidence,
+            ))
     return images
 
 
@@ -104,9 +120,9 @@ def build_segments_data(message_segments: List[Dict]) -> List[Dict]:
     return segments
 
 
-def parse_message(message_segments: List[Dict]) -> ParsedMessage:
+def parse_message(message_segments: List[Dict], raw_message: str = "") -> ParsedMessage:
     text = extract_text(message_segments)
-    images = extract_images(message_segments)
+    images = extract_images(message_segments, raw_message)
     replies = extract_replies(message_segments)
     at_mentions = extract_at_mentions(message_segments)
     forward_ids = extract_forward_ids(message_segments)

@@ -77,11 +77,13 @@ class CommandHandler:
         total_all = await self.storage.count_messages()
         img_total = await self.storage.count_images(chat_type, chat_id)
         img_downloaded = await self.storage.count_downloaded_images(chat_type, chat_id)
+        stickers = await self.storage.count_stickers(chat_type, chat_id)
 
         label = "群" if chat_type == "group" else "聊"
         lines = [
             f"\nRecorder Stats",
-            f"  本{label}: {total} msgs | {img_total} imgs ({img_downloaded} downloaded)",
+            f"  本{label}: {total} msgs | {img_total} imgs "
+            f"({img_downloaded} downloaded, {stickers} stickers)",
             f"  Total: {total_all} msgs",
         ]
         await event.reply(text="\n".join(lines))
