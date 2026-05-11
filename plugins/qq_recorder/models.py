@@ -1,17 +1,18 @@
 from datetime import datetime
+
 from sqlalchemy import (
-    func,
+    Boolean,
+    DateTime,
+    Float,
     ForeignKey,
+    Integer,
     String,
     Text,
-    Integer,
-    Boolean,
-    Float,
-    DateTime,
     UniqueConstraint,
+    func,
 )
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 
 class Base(DeclarativeBase):

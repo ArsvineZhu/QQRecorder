@@ -113,7 +113,8 @@ def fix_database(db_path: str, renames: list[tuple[str, str]], dry_run: bool) ->
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, local_path FROM images WHERE downloaded = 1 AND local_path IS NOT NULL"
+        "SELECT id, local_path FROM images "
+        "WHERE downloaded = 1 AND local_path IS NOT NULL"
     )
     rows = cur.fetchall()
 
@@ -130,7 +131,9 @@ def fix_database(db_path: str, renames: list[tuple[str, str]], dry_run: bool) ->
             updated += 1
             action = "WOULD UPDATE" if dry_run else "UPDATED"
             print(
-                f"  {action} DB id={row_id}: {os.path.basename(local_path)} -> {os.path.basename(new_path)}"
+                f"  {action} DB id={row_id}: "
+                f"{os.path.basename(local_path)} -> "
+                f"{os.path.basename(new_path)}"
             )
 
     if not dry_run:
@@ -192,7 +195,8 @@ def main():
     print("Mismatched files:")
     for m in mismatches:
         print(
-            f"    {m['filename']}  (current: {m['current_ext']}, actual: .{m['actual_ext']})"
+            f"    {m['filename']}  (current: {m['current_ext']}, "
+            f"actual: .{m['actual_ext']})"
         )
 
     # Step 2: Fix files

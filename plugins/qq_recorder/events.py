@@ -1,6 +1,5 @@
-"""Pure utility functions for event conversion, command detection, and log formatting."""
-
-from typing import Dict
+"""Pure utility functions for event conversion, command detection, and log
+formatting."""
 
 from .text_utils import unescape_text
 
@@ -56,7 +55,7 @@ def is_command(raw_message: str, prefixes: tuple[str, ...]) -> bool:
     return first_token in prefixes
 
 
-def format_stored_log(event: Dict, parsed, max_depth: int, message_db_id: int) -> str:
+def format_stored_log(event: dict, parsed, max_depth: int, message_db_id: int) -> str:
     """Format a log line for a stored message."""
     chat_type = event.get("message_type")
     chat_id = event.get("group_id") or event.get("user_id")

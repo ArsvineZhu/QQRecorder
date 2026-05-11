@@ -1,7 +1,6 @@
 """Command handling for QQRecorder: stats, recent, search."""
 
-import logging
-from typing import Any, Optional
+from typing import Any
 
 from .storage import MessageStorage
 from .text_utils import unescape_text
@@ -81,7 +80,7 @@ class CommandHandler:
 
         label = "群" if chat_type == "group" else "聊"
         lines = [
-            f"\nRecorder Stats",
+            "\nRecorder Stats",
             f"  本{label}: {total} msgs | {img_total} imgs "
             f"({img_downloaded} downloaded, {stickers} stickers)",
             f"  Total: {total_all} msgs",

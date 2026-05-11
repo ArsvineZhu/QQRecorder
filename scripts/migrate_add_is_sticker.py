@@ -12,14 +12,17 @@ Usage:
 import argparse
 import os
 import sys
+
 from sqlalchemy import create_engine, inspect, text
+
 
 def column_exists(inspector, table_name: str, column_name: str) -> bool:
     """Check if a column already exists in the table."""
     columns = [col["name"] for col in inspector.get_columns(table_name)]
     return column_name in columns
 
-def main():
+
+def main():  # noqa: C901
     parser = argparse.ArgumentParser(
         description="Add is_sticker and sticker_confidence fields to images table"
     )
@@ -37,7 +40,8 @@ def main():
         sys.exit(1)
 
     mode = "DRY RUN" if args.dry_run else "LIVE"
-    print(f"=== Migration: Add is_sticker and sticker_confidence to images table ({mode}) ===")
+    title = "Migration: Add is_sticker/sticker_confidence to images table"
+    print(f"=== {title} ({mode}) ===")
     print(f"Database: {db_path}")
     print()
 
@@ -80,12 +84,18 @@ def main():
     with engine.connect() as conn:
         if not has_is_sticker:
             print("  Adding column 'is_sticker'...")
-            conn.execute(text("ALTER TABLE images ADD COLUMN is_sticker BOOLEAN DEFAULT FALSE"))
-        
+            conn.execute(
+                text("ALTER TABLE images ADD COLUMN is_sticker BOOLEAN DEFAULT FALSE")
+            )
+
         if not has_sticker_confidence:
             print("  Adding column 'sticker_confidence'...")
-            conn.execute(text("ALTER TABLE images ADD COLUMN sticker_confidence FLOAT DEFAULT 0.0"))
-        
+            conn.execute(
+                text(
+                    "ALTER TABLE images ADD COLUMN sticker_confidence FLOAT DEFAULT 0.0"
+                )
+            )
+
         conn.commit()
 
     print()
@@ -97,6 +107,7 @@ def main():
         added += 1
     print(f"  Added columns: {added}")
     print("  Migration complete!")
+
 
 if __name__ == "__main__":
     main()

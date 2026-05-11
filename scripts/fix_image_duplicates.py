@@ -24,7 +24,6 @@ import os
 import sqlite3
 import sys
 
-
 # ---------------------------------------------------------------------------
 # Detection helpers
 # ---------------------------------------------------------------------------
@@ -119,7 +118,8 @@ def migrate(conn: sqlite3.Connection, dry_run: bool) -> None:
                 if len(url_preview) < len(g["file_url"] or ""):
                     url_preview += "..."
                 print(
-                    f"    message_id={g['message_id']}, file_url={url_preview}, x{g['count']}"
+                    f"    message_id={g['message_id']}, "
+                    f"file_url={url_preview}, x{g['count']}"
                 )
             if len(dup_groups) > 10:
                 print(f"    ... and {len(dup_groups) - 10} more groups")
@@ -130,7 +130,8 @@ def migrate(conn: sqlite3.Connection, dry_run: bool) -> None:
         if dup_count > 0:
             print(f"  WOULD DELETE {dup_count} duplicate rows")
         print(
-            "  WOULD CREATE images_new table with UniqueConstraint(message_id, file_url)"
+            "  WOULD CREATE images_new table with "
+            "UniqueConstraint(message_id, file_url)"
         )
         print("  WOULD COPY deduplicated data to images_new")
         print("  WOULD DROP images, RENAME images_new TO images")

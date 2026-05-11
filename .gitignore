@@ -51,6 +51,3 @@ docs/
 # Opencode
 .opencode/
 .sisyphus/
-
-# Lock files
-uv.lock

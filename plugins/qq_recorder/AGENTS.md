@@ -1,6 +1,6 @@
 # QQRecorder Plugin
 
-NcatBot plugin that silently records QQ group/private messages to SQLite with image download and forward parsing.
+NcatBot plugin that silently records QQ group/private messages to SQLite with image download, forward parsing, and sticker detection. 13 source files, 1 test file. Python 3.12+, async throughout.
 
 ## DATA FLOW
 
@@ -12,6 +12,29 @@ NcatBot Event → events.event_to_dict() → processors.MessageProcessor.process
   ├─ forward_parser: api.qq.get_forward_msg() → parse_forward_response() → flatten_forward_nodes()
   ├─ storage.save_message() → Message + related records in SQLite
   └─ image_handler.process_images() → download → detect extension → save → update DB
+```
+
+## STRUCTURE
+
+```
+plugins/qq_recorder/
+├── plugin.py              # Plugin entry: QQRecorderPlugin (77 lines)
+├── manifest.toml          # NcatBot plugin descriptor
+├── events.py              # Event conversion + command detection (pure functions)
+├── commands.py            # CommandHandler: stats/recent/search
+├── processors.py          # MessageProcessor: pipeline orchestrator
+├── config.py              # RecorderSettings + monitoring filter
+├── models.py              # SQLAlchemy ORM: Message, Image, ForwardMessage, etc.
+├── storage.py             # MessageStorage: all async DB operations
+├── message_parser.py      # Segment parsing → ParsedMessage DTO
+├── image_handler.py       # Image download + format detection + save
+├── forward_parser.py      # Recursive forward node parsing
+├── sticker_detector.py    # 3-layer sticker detection cascade
+├── text_utils.py          # Control char escape/unescape for DB storage
+├── __init__.py             # Empty (package marker)
+└── tests/
+    ├── __init__.py
+    └── test_sticker_detection.py  # 8 unit tests (only test file)
 ```
 
 ## MODULES
@@ -29,17 +52,19 @@ NcatBot Event → events.event_to_dict() → processors.MessageProcessor.process
 | `image_handler.py` | Download, format detect, save | `process_images()`, `detect_extension()` |
 | `forward_parser.py` | Recursive forward node parsing | `parse_forward_response()`, `ForwardNode` |
 | `sticker_detector.py` | 3-layer sticker detection cascade | `combined_detection()`, `detect_by_metadata()`, `detect_by_text()`, `detect_by_heuristics()` |
+| `text_utils.py` | Control char escaping for DB storage | `escape_text()`, `unescape_text()` |
 
 ## CONVENTIONS (PLUGIN-SPECIFIC)
 
 - **Plugin entry**: NcatBot loads via `manifest.toml` → `main = "plugin.py"` → `entry_class = "QQRecorderPlugin"`. No separate `main.py` re-export.
-- **Command prefixes**: `("recorder", "/recorder", "r", "/r")` — registered via `@registrar.qq.on_group_command()`.
+- **Command prefixes**: `("recorder", "/recorder", "r", "/r")` — registered via `@registrar.qq.on_group_command()` and `@registrar.qq.on_private_command()`.
 - **Extension detection order**: URL ext → Content-Type → magic bytes → fallback `.jpg`. Never skip a layer.
 - **MD5 filenames**: Images saved as `<md5hash>.<ext>` for auto-dedup. Hash is of binary content, not URL.
 - **Forward depth**: Configurable via `forward.max_depth` (default 10, max 50). Prevents infinite recursion.
 - **Per-message error isolation**: `MessageProcessor.process_message()` wraps everything in try/except — one bad message never kills the plugin.
 - **Sticker detection order**: sub_type metadata (primary, 0.95) → CQ码 text pattern (0.95) → heuristic format+size (0.7-0.85). Combined confidence ≥ 0.7 marks as sticker.
 - **Sticker detection invoked in parse**: `extract_images()` in `message_parser.py` calls `combined_detection()` — no separate step in the pipeline.
+- **Event immutability**: Never modify event objects in-place — always convert to dict first via `event_to_dict()`.
 
 ## ANTI-PATTERNS (THIS PLUGIN)
 
@@ -49,6 +74,8 @@ NcatBot Event → events.event_to_dict() → processors.MessageProcessor.process
 - **NEVER** modify `event` objects in-place — convert to dict first via `event_to_dict()`
 - **NEVER** rely on `is_sticker` / `stickerId` fields in QQ segment_data — use `sub_type` instead (0=image, 1=animated sticker, 7=shop sticker, 13=emoji sticker)
 - **NEVER** pass `raw_message` as the sole data source for sticker detection — always also check `segment_data` dict for `sub_type` field
+- **NEVER** suppress type errors with `# pyright: ignore[...]` in new code — legacy suppressions exist in storage.py and image_handler.py; refactor them out, do not add more
+- **NEVER** use `file_unique` for dedup — always use MD5 hash of image content
 
 ## GOTCHAS
 
@@ -61,3 +88,5 @@ NcatBot Event → events.event_to_dict() → processors.MessageProcessor.process
 - `sub_type=1` in CQ码 raw_message (e.g., `[CQ:image,sub_type=1,...]`) can also be detected via regex on raw_message string — this catches cases where segment_data parsing loses the field.
 - `is_sticker` defaults to `False` (0) for all records — only explicitly set to `True` when confidence ≥ 0.7. Backfilled records have confidence 0.95 when detected via metadata/text, 0.5-0.85 when detected via heuristics.
 - The `face` segment type is a separate QQ emoji system, NOT related to image-type stickers — do not conflate `face` segments with `image` sticker detection.
+- Plugin version is declared in both `plugin.py` (`version = "1.3.1"`) and `manifest.toml` (`version = "1.3.1"`) — keep them in sync.
+- Tests: `uv run pytest plugins/qq_recorder/tests/` — only 8 unit tests for sticker_detector.py. No conftest, fixtures, or mocks.

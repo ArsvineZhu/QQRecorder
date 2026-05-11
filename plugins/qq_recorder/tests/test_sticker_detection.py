@@ -1,9 +1,8 @@
-import pytest
 from plugins.qq_recorder.sticker_detector import (
-    detect_by_text,
-    detect_by_metadata,
-    detect_by_heuristics,
     combined_detection,
+    detect_by_heuristics,
+    detect_by_metadata,
+    detect_by_text,
 )
 
 
@@ -12,7 +11,7 @@ from plugins.qq_recorder.sticker_detector import (
 # ------------------------------
 def test_detect_by_text_has_sticker_keyword():
     """Test detect_by_text: CQ code contains sub_type=1 (sticker indicator)"""
-    raw = '[CQ:image,summary=&#91;&#211;&#197;&#187;&#173;&#177;&#237;&#199;&#233;&#93;,file=abc.png,sub_type=1,url=https://example.com/img,file_size=23850]'
+    raw = "[CQ:image,summary=&#91;&#211;&#197;&#187;&#173;&#177;&#237;&#199;&#233;&#93;,file=abc.png,sub_type=1,url=https://example.com/img,file_size=23850]"
     is_sticker, confidence = detect_by_text(raw)
     assert is_sticker is True
     assert confidence > 0.5
@@ -20,7 +19,7 @@ def test_detect_by_text_has_sticker_keyword():
 
 def test_detect_by_text_no_sticker_keyword():
     """Test detect_by_text: CQ code has sub_type=0 (regular image)"""
-    raw = '[CQ:image,file=photo.jpg,sub_type=0,url=https://example.com/photo,file_size=125070]'
+    raw = "[CQ:image,file=photo.jpg,sub_type=0,url=https://example.com/photo,file_size=125070]"
     is_sticker, confidence = detect_by_text(raw)
     assert is_sticker is False
     assert confidence < 0.5
@@ -86,7 +85,7 @@ def test_detect_by_heuristics_not_sticker_large_size_jpg():
 # ------------------------------
 def test_combined_detection_all_agree_positive():
     """Test combined_detection: all three methods detect sticker"""
-    raw_message = '[CQ:image,summary=&#91;&#211;&#197;&#187;&#173;&#177;&#237;&#199;&#233;&#93;,file=abc.gif,sub_type=1,url=https://example.com/img,file_size=24500]'
+    raw_message = "[CQ:image,summary=&#91;&#211;&#197;&#187;&#173;&#177;&#237;&#199;&#233;&#93;,file=abc.gif,sub_type=1,url=https://example.com/img,file_size=24500]"
     segment_data = {
         "file": "abc.gif",
         "url": "https://example.com/img",
@@ -107,7 +106,7 @@ def test_combined_detection_all_agree_positive():
 
 def test_combined_detection_all_agree_negative():
     """Test combined_detection: all three methods detect non-sticker"""
-    raw_message = '[CQ:image,file=photo.jpg,sub_type=0,url=https://example.com/photo,file_size=2500000]'
+    raw_message = "[CQ:image,file=photo.jpg,sub_type=0,url=https://example.com/photo,file_size=2500000]"
     segment_data = {
         "file": "photo.jpg",
         "url": "https://example.com/photo",

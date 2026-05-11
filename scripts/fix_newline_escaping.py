@@ -26,7 +26,7 @@ import sys
 
 # Fix Windows console encoding
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # pyright: ignore[reportAttributeAccessIssue]
 
 # ---------------------------------------------------------------------------
 # Escape logic (same as text_utils.escape_text)
@@ -125,7 +125,8 @@ def fix_table(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Escape newline/carriage-return/tab characters in stored text fields"
+        description="Escape newline/carriage-return/tab "
+        "characters in stored text fields"
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview changes without applying them"

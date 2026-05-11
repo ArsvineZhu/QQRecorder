@@ -1,6 +1,5 @@
-from dataclasses import dataclass
 import json
-from typing import List, Dict
+from dataclasses import dataclass
 
 from .sticker_detector import combined_detection
 
@@ -31,17 +30,17 @@ class ParsedMessage:
     has_reply: bool
     has_forward: bool
     has_at: bool
-    segments: List[Dict]
-    images: List[ImageInfo]
-    replies: List[ReplyInfo]
-    at_mentions: List[AtInfo]
-    forward_ids: List[str]
+    segments: list[dict]
+    images: list[ImageInfo]
+    replies: list[ReplyInfo]
+    at_mentions: list[AtInfo]
+    forward_ids: list[str]
 
 
 ALLOWED_SEGMENT_TYPES = {"text", "image", "at", "reply", "forward", "face"}
 
 
-def extract_text(segments: List[Dict]) -> str:
+def extract_text(segments: list[dict]) -> str:
     text_parts = []
     for seg in segments:
         if seg["type"] == "text":
@@ -49,7 +48,7 @@ def extract_text(segments: List[Dict]) -> str:
     return "".join(text_parts)
 
 
-def extract_images(segments: List[Dict], raw_message: str = "") -> List[ImageInfo]:
+def extract_images(segments: list[dict], raw_message: str = "") -> list[ImageInfo]:
     images = []
     for seg in segments:
         if seg["type"] == "image":
@@ -66,17 +65,19 @@ def extract_images(segments: List[Dict], raw_message: str = "") -> List[ImageInf
                 segment_data=data,
             )
 
-            images.append(ImageInfo(
-                file_url=file_url,
-                file_unique=file_unique,
-                file_size=file_size,
-                is_sticker=is_sticker,
-                sticker_confidence=sticker_confidence,
-            ))
+            images.append(
+                ImageInfo(
+                    file_url=file_url,
+                    file_unique=file_unique,
+                    file_size=file_size,
+                    is_sticker=is_sticker,
+                    sticker_confidence=sticker_confidence,
+                )
+            )
     return images
 
 
-def extract_replies(segments: List[Dict]) -> List[ReplyInfo]:
+def extract_replies(segments: list[dict]) -> list[ReplyInfo]:
     replies = []
     for seg in segments:
         if seg["type"] == "reply":
@@ -85,7 +86,7 @@ def extract_replies(segments: List[Dict]) -> List[ReplyInfo]:
     return replies
 
 
-def extract_at_mentions(segments: List[Dict]) -> List[AtInfo]:
+def extract_at_mentions(segments: list[dict]) -> list[AtInfo]:
     ats = []
     for seg in segments:
         if seg["type"] == "at":
@@ -94,7 +95,7 @@ def extract_at_mentions(segments: List[Dict]) -> List[AtInfo]:
     return ats
 
 
-def extract_forward_ids(segments: List[Dict]) -> List[str]:
+def extract_forward_ids(segments: list[dict]) -> list[str]:
     forward_ids = []
     for seg in segments:
         if seg["type"] == "forward":
@@ -104,7 +105,7 @@ def extract_forward_ids(segments: List[Dict]) -> List[str]:
     return forward_ids
 
 
-def build_segments_data(message_segments: List[Dict]) -> List[Dict]:
+def build_segments_data(message_segments: list[dict]) -> list[dict]:
     segments = []
     for idx, seg in enumerate(message_segments):
         seg_type = seg["type"]
@@ -120,7 +121,7 @@ def build_segments_data(message_segments: List[Dict]) -> List[Dict]:
     return segments
 
 
-def parse_message(message_segments: List[Dict], raw_message: str = "") -> ParsedMessage:
+def parse_message(message_segments: list[dict], raw_message: str = "") -> ParsedMessage:
     text = extract_text(message_segments)
     images = extract_images(message_segments, raw_message)
     replies = extract_replies(message_segments)

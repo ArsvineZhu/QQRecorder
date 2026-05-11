@@ -1,13 +1,14 @@
-from dataclasses import dataclass
-import os
+import asyncio
 import datetime
 import hashlib
+import os
 import re
+from dataclasses import dataclass
+
 import aiohttp
-import asyncio
-from typing import Tuple, List
-from .message_parser import ImageInfo
+
 from .config import ImageConfig
+from .message_parser import ImageInfo
 
 
 class ImageDownloadError(Exception):
@@ -24,8 +25,8 @@ class ImageResult:
 
 
 def generate_image_path(
-    base_dir: str, filename: str, date: datetime.datetime = None # pyright: ignore[reportArgumentType]
-) -> str:  # pyright: ignore[reportArgumentType]
+    base_dir: str, filename: str, date: datetime.datetime | None = None
+) -> str:
     if date is None:
         date = datetime.datetime.now()
     date_path = os.path.join(
@@ -117,8 +118,8 @@ async def download_image(
     url: str,
     timeout: int = 30,
     max_size: int = 20971520,
-    session: aiohttp.ClientSession = None, # pyright: ignore[reportArgumentType]
-) -> Tuple[bytes, dict]:  # pyright: ignore[reportArgumentType]
+    session: aiohttp.ClientSession | None = None,
+) -> tuple[bytes, dict]:
     own_session = session is None
     try:
         timeout_obj = aiohttp.ClientTimeout(total=timeout)
@@ -141,6 +142,7 @@ async def download_image(
         raise ImageDownloadError(f"Download failed: {str(e)}") from e
     finally:
         if own_session:
+            assert session is not None
             await session.close()
 
 
@@ -158,8 +160,8 @@ async def process_image(
     image_info: ImageInfo,
     config_storage_dir: str,
     config_image: ImageConfig,
-    session: aiohttp.ClientSession = None, # pyright: ignore[reportArgumentType]
-) -> ImageResult:  # pyright: ignore[reportArgumentType]
+    session: aiohttp.ClientSession | None = None,
+) -> ImageResult:
     try:
         if not image_info.file_url:
             return ImageResult(
@@ -203,8 +205,8 @@ async def process_image(
 
 
 async def process_images(
-    images: List[ImageInfo], config_storage_dir: str, config_image: ImageConfig
-) -> List[ImageResult]:
+    images: list[ImageInfo], config_storage_dir: str, config_image: ImageConfig
+) -> list[ImageResult]:
     results = []
     if not config_image.download:
         for img in images:

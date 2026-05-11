@@ -82,7 +82,7 @@ def build_config(raw: dict) -> RecorderSettings:
     return config
 
 
-def _validate_config(config: RecorderSettings) -> None:
+def _validate_config(config: RecorderSettings) -> None:  # noqa: C901
     if not config.storage.database.strip():
         raise ValueError("storage.database must be a non-empty string")
     if not config.storage.images_dir.strip():

@@ -1,18 +1,17 @@
 [project]
 name = "qqrecorder"
-version = "1.3.0"
+version = "1.3.1"
 description = "静默 QQ 消息记录器 —— 基于 NcatBot 的 QQ 消息自动记录插件"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [
-    { name = "Arsvine Zhu", url = "https://github.com/Arsvinezhu" },
+    { name = "Arsvine Zhu" },
 ]
 keywords = ["qq", "recorder", "ncatbot", "bot", "message"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -20,17 +19,26 @@ classifiers = [
 ]
 dependencies = [
     "ncatbot5>=5.5.3.post1",
-    "ruff>=0.15.12",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.19.0",
     "aiohttp>=3.9",
 ]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["plugins"]
+include = ["qq_recorder*"]
 
 [project.urls]
 Repository = "https://github.com/Arsvinezhu/QQRecorder"
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.0",
     "pyright>=1.1.409",
     "pytest>=9.0.3",
+    "ruff>=0.15.12",
 ]

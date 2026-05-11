@@ -1,17 +1,17 @@
-from typing import Optional
-from sqlalchemy import select, func, desc
+from sqlalchemy import desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
+
 from .models import (
+    AtMention,
     Base,
-    init_engine,
+    ForwardMessage,
+    Image,
     Message,
     MessageSegment,
-    Image,
-    Reply,
-    ForwardMessage,
-    AtMention,
     MonitoredChat,
+    Reply,
+    init_engine,
 )
 
 
@@ -19,7 +19,7 @@ class MessageStorage:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.engine = None
-        self.AsyncSessionLocal = None
+        self.AsyncSessionLocal: async_sessionmaker[AsyncSession] | None = None
 
     async def init_db(self):
         self.engine, self.AsyncSessionLocal = await init_engine(self.db_path)
@@ -30,8 +30,13 @@ class MessageStorage:
         if self.engine:
             await self.engine.dispose()
 
+    def _session(self) -> AsyncSession:
+        """Return AsyncSessionLocal with assertion that init_db() was called."""
+        assert self.AsyncSessionLocal is not None, "init_db() not called"
+        return self.AsyncSessionLocal()
+
     async def save_message(self, message_data: dict) -> int:
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        async with self._session() as session:
             try:
                 message = Message(
                     message_id=message_data["message_id"],
@@ -107,8 +112,8 @@ class MessageStorage:
                 await session.rollback()
                 raise
 
-    async def get_message(self, message_id: str) -> Optional[Message]:
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+    async def get_message(self, message_id: str) -> Message | None:
+        async with self._session() as session:
             stmt = (
                 select(Message)
                 .where(Message.message_id == message_id)
@@ -126,9 +131,9 @@ class MessageStorage:
             return result.scalar_one_or_none()
 
     async def get_recent_messages(
-        self, chat_type: str = None, chat_id: str = None, limit: int = 10
-    ) -> list[Message]:  # pyright: ignore[reportArgumentType]
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        self, chat_type: str | None = None, chat_id: str | None = None, limit: int = 10
+    ) -> list[Message]:
+        async with self._session() as session:
             stmt = (
                 select(Message)
                 .options(
@@ -148,8 +153,10 @@ class MessageStorage:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
-    async def count_messages(self, chat_type: str = None, chat_id: str = None) -> int:  # pyright: ignore[reportArgumentType]
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+    async def count_messages(
+        self, chat_type: str | None = None, chat_id: str | None = None
+    ) -> int:
+        async with self._session() as session:
             stmt = select(func.count(Message.id))
             if chat_type:
                 stmt = stmt.where(Message.chat_type == chat_type)
@@ -161,8 +168,10 @@ class MessageStorage:
             result = await session.execute(stmt)
             return result.scalar_one()
 
-    async def count_images(self, chat_type: str = None, chat_id: str = None) -> int:  # pyright: ignore[reportArgumentType]
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+    async def count_images(
+        self, chat_type: str | None = None, chat_id: str | None = None
+    ) -> int:
+        async with self._session() as session:
             stmt = select(func.count(Image.id)).join(
                 Message, Image.message_id == Message.id
             )
@@ -177,13 +186,13 @@ class MessageStorage:
             return result.scalar_one()
 
     async def count_downloaded_images(
-        self, chat_type: str = None, chat_id: str = None
+        self, chat_type: str | None = None, chat_id: str | None = None
     ) -> int:
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        async with self._session() as session:
             stmt = (
                 select(func.count(Image.id))
                 .join(Message, Image.message_id == Message.id)
-                .where(Image.downloaded == True)
+                .where(Image.downloaded)
             )
             if chat_type:
                 stmt = stmt.where(Message.chat_type == chat_type)
@@ -196,9 +205,9 @@ class MessageStorage:
             return result.scalar_one()
 
     async def count_stickers(
-        self, chat_type: str = None, chat_id: str = None
+        self, chat_type: str | None = None, chat_id: str | None = None
     ) -> int:
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        async with self._session() as session:
             stmt = (
                 select(func.count(Image.id))
                 .join(Message, Image.message_id == Message.id)
@@ -215,9 +224,13 @@ class MessageStorage:
             return result.scalar_one()
 
     async def search_messages(
-        self, keyword: str, chat_type: str = None, chat_id: str = None, limit: int = 10
-    ) -> list[Message]:  # pyright: ignore[reportArgumentType]
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        self,
+        keyword: str,
+        chat_type: str | None = None,
+        chat_id: str | None = None,
+        limit: int = 10,
+    ) -> list[Message]:
+        async with self._session() as session:
             stmt = (
                 select(Message)
                 .options(
@@ -239,7 +252,7 @@ class MessageStorage:
             return list(result.scalars().all())
 
     async def save_image(self, message_db_id: int, image_data: dict) -> Image:
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        async with self._session() as session:
             try:
                 image = Image(
                     message_id=message_db_id,
@@ -268,7 +281,7 @@ class MessageStorage:
     async def update_image_local_path(
         self, image_id: int, local_path: str, downloaded: bool = True
     ):
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        async with self._session() as session:
             try:
                 stmt = select(Image).where(Image.id == image_id)
                 result = await session.execute(stmt)
@@ -281,15 +294,15 @@ class MessageStorage:
                 raise
 
     async def get_monitored_chats(self) -> list[MonitoredChat]:
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
-            stmt = select(MonitoredChat).where(MonitoredChat.enabled == True)
+        async with self._session() as session:
+            stmt = select(MonitoredChat).where(MonitoredChat.enabled)
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
     async def add_monitored_chat(
-        self, chat_type: str, chat_id: str, chat_name: str = None
-    ) -> MonitoredChat:  # pyright: ignore[reportArgumentType]
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        self, chat_type: str, chat_id: str, chat_name: str | None = None
+    ) -> MonitoredChat:
+        async with self._session() as session:
             try:
                 existing_stmt = select(MonitoredChat).where(
                     MonitoredChat.chat_type == chat_type,
@@ -319,7 +332,7 @@ class MessageStorage:
                 raise
 
     async def remove_monitored_chat(self, chat_type: str, chat_id: str) -> bool:
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        async with self._session() as session:
             try:
                 stmt = select(MonitoredChat).where(
                     MonitoredChat.chat_type == chat_type,
@@ -337,11 +350,11 @@ class MessageStorage:
                 raise
 
     async def is_chat_monitored(self, chat_type: str, chat_id: str) -> bool:
-        async with self.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
+        async with self._session() as session:
             stmt = select(MonitoredChat).where(
                 MonitoredChat.chat_type == chat_type,
                 MonitoredChat.chat_id == chat_id,
-                MonitoredChat.enabled == True,
+                MonitoredChat.enabled,
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none() is not None

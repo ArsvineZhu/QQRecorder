@@ -2,14 +2,18 @@
 QQRecorder database export & inspection tool.
 
 Usage:
-    python scripts/export_db.py summary                 # Overview: table row counts, date range
-    python scripts/export_db.py schema                  # Full table schema (columns, types, constraints)
-    python scripts/export_db.py table <name> [N]        # Dump rows from a table (limit N, default 20)
-    python scripts/export_db.py messages [--chat TYPE] [--id ID] [-n N]   # Messages with joined data
-    python scripts/export_db.py images [--downloaded] [--missing] [-n N]  # Image records
-    python scripts/export_db.py search <keyword> [-n N] # Full-text search in raw_message
-    python scripts/export_db.py export [--format FORMAT] [--output FILE]  # Export entire DB as JSON/CSV
-    python scripts/export_db.py stats                   # Per-chat statistics
+    python scripts/export_db.py summary  # Overview: row counts, date range
+    python scripts/export_db.py schema   # Schema: columns, types, constraints
+    python scripts/export_db.py table <name> [N]  # Dump rows from table (default: 20)
+    python scripts/export_db.py messages [--chat TYPE] [--id ID] [-n N]
+        # Messages with joined data
+    python scripts/export_db.py images [--downloaded] [--missing] [-n N]
+        # Image records
+    python scripts/export_db.py search <keyword> [-n N]
+        # Full-text search in raw_message
+    python scripts/export_db.py export [--format FORMAT] [--output FILE]
+        # Export entire DB as JSON/CSV
+    python scripts/export_db.py stats    # Per-chat statistics
 """
 
 import argparse
@@ -21,10 +25,9 @@ import sys
 from datetime import datetime
 from io import StringIO
 
-
 # Fix Windows console encoding — GBK can't handle CJK/emoji in DB content
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # pyright: ignore[reportAttributeAccessIssue]
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +159,8 @@ def _fmt_cell(value, col_name: str, max_len=40) -> str:
     return _truncate(s, max_len)
 
 
-# Column name patterns that suggest free-form text — move these to the end and don't truncate
+# Column name patterns that suggest free-form text — move these to the
+# end and don't truncate
 _TEXT_COL_PATTERNS = (
     "raw_message",
     "message",
@@ -238,7 +242,7 @@ def cmd_summary(conn, _args):
     )
     chat_rows = cur.fetchall()
     if chat_rows:
-        print(f"\n  By chat type:")
+        print("\n  By chat type:")
         for cr in chat_rows:
             print(f"    {cr[0]}: {cr[1]} messages")
 
@@ -252,12 +256,13 @@ def cmd_summary(conn, _args):
 
     # Distinct chats
     cur.execute(
-        "SELECT chat_type, COUNT(DISTINCT CASE WHEN chat_type='group' THEN group_id ELSE user_id END) "
+        "SELECT chat_type, "
+        "COUNT(DISTINCT CASE WHEN chat_type='group' THEN group_id ELSE user_id END) "
         "FROM messages GROUP BY chat_type"
     )
     chat_counts = cur.fetchall()
     if chat_counts:
-        print(f"\n  Distinct chats:")
+        print("\n  Distinct chats:")
         for cc in chat_counts:
             label = "groups" if cc[0] == "group" else "private chats"
             print(f"    {cc[1]} {label}")
@@ -492,7 +497,7 @@ def cmd_images(conn, args):
     print()
 
 
-def cmd_export(conn, args):
+def cmd_export(conn, args):  # noqa: C901
     """Export entire database as JSON or CSV."""
     fmt = args.format
     output = args.output
@@ -678,7 +683,7 @@ def cmd_stats(conn, _args):
     )
     r = cur.fetchone()
     if r:
-        print(f"\n  Message composition:")
+        print("\n  Message composition:")
         print(f"    Total:      {r[4]}")
         print(f"    With image: {r[0]} ({_pct(r[0], r[4])})")
         print(f"    With reply: {r[1]} ({_pct(r[1], r[4])})")

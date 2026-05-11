@@ -4,16 +4,16 @@ from ncatbot.core import registrar
 from ncatbot.event.qq import GroupMessageEvent, PrivateMessageEvent
 from ncatbot.plugin import NcatBotPlugin
 
-from .config import DEFAULT_CONFIG, build_config
-from .storage import MessageStorage
-from .events import event_to_dict
 from .commands import CommandHandler
+from .config import build_config
+from .events import event_to_dict
 from .processors import MessageProcessor
+from .storage import MessageStorage
 
 
 class QQRecorderPlugin(NcatBotPlugin):
     name = "qq_recorder"
-    version = "1.3.0"
+    version = "1.3.1"
     author = "Arsvine Zhu"
     description = "静默 QQ 消息记录器"
 

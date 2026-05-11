@@ -1,19 +1,19 @@
-"""Message processing pipeline: core message handling, forward parsing, image processing."""
+"""Message processing pipeline: core message handling, forward parsing, image
+processing."""
 
-import logging
 from datetime import datetime
-from typing import Any, Optional, Dict
+from typing import Any
 
 from sqlalchemy import select
 
 from .config import RecorderSettings
+from .events import format_stored_log, is_command
+from .forward_parser import flatten_forward_nodes, parse_forward_response
+from .image_handler import process_images
+from .message_parser import ImageInfo, parse_message
 from .models import Image
 from .storage import MessageStorage
-from .message_parser import parse_message, ImageInfo
-from .image_handler import process_images, ImageResult
-from .forward_parser import parse_forward_response, flatten_forward_nodes
 from .text_utils import escape_text
-from .events import is_command, format_stored_log
 
 
 class MessageProcessor:
@@ -31,7 +31,7 @@ class MessageProcessor:
         self.api = api
         self.logger = logger
 
-    async def process_message(self, event: Dict) -> Optional[int]:
+    async def process_message(self, event: dict) -> int | None:
         """Process a single message event dict. Returns the DB id or None."""
         try:
             chat_type = event.get("message_type")
@@ -134,7 +134,7 @@ class MessageProcessor:
             results = await process_images(
                 images_info, self.settings.storage.images_dir, self.settings.image
             )
-            for img_info, img_result in zip(images_info, results):
+            for img_info, img_result in zip(images_info, results, strict=True):
                 if img_result.success:
                     async with self.storage.AsyncSessionLocal() as session:  # pyright: ignore[reportOptionalCall]
                         stmt = select(Image).where(

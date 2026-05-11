@@ -5,7 +5,8 @@ Scans images where sticker_confidence == 0.0 and runs the sticker
 detection pipeline to populate is_sticker and sticker_confidence fields.
 
 Usage:
-    python scripts/backfill_sticker_flags.py [--dry-run] [--start-id N] [--end-id N] [--verbose]
+    python scripts/backfill_sticker_flags.py [--dry-run] [--start-id N]
+        [--end-id N] [--verbose]
 """
 
 import argparse
@@ -13,7 +14,6 @@ import json
 import os
 import sqlite3
 import sys
-
 
 # ---------------------------------------------------------------------------
 # Detection — uses the real sticker_detector module
@@ -27,6 +27,7 @@ def _import_detector():
     if project_dir not in sys.path:
         sys.path.insert(0, project_dir)
     import importlib
+
     mod = importlib.import_module("plugins.qq_recorder.sticker_detector")
     return mod.combined_detection
 
@@ -163,7 +164,7 @@ def fetch_image_records(
 # ---------------------------------------------------------------------------
 
 
-def main():
+def main():  # noqa: C901
     parser = argparse.ArgumentParser(
         description="Backfill is_sticker / sticker_confidence for existing images"
     )
@@ -203,13 +204,16 @@ def main():
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='images'")
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='images'"
+        )
         if not cur.fetchone():
             print("  Table 'images' not found. Nothing to backfill.")
             return
 
         cur.execute(
-            "SELECT name FROM pragma_table_info('images') WHERE name IN ('is_sticker', 'sticker_confidence')"
+            "SELECT name FROM pragma_table_info('images') "
+            "WHERE name IN ('is_sticker', 'sticker_confidence')"
         )
         existing = {r[0] for r in cur.fetchall()}
         if "is_sticker" not in existing or "sticker_confidence" not in existing:
@@ -272,7 +276,8 @@ def main():
 
             if not args.dry_run:
                 cur.execute(
-                    "UPDATE images SET is_sticker = ?, sticker_confidence = ? WHERE id = ?",
+                    "UPDATE images SET is_sticker = ?, "
+                    "sticker_confidence = ? WHERE id = ?",
                     (is_sticker, confidence, rec["id"]),
                 )
             processed += 1
