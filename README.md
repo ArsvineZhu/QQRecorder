@@ -15,6 +15,7 @@
 - **表情识别** — 自动区分普通图片与动画表情/贴纸，支持三重检测（字段、文本、启发式）和历史数据回溯
 - **应用分享识别** — 自动识别 QQ 小程序、图文分享、位置分享等 JSON 格式消息（B站视频、网易云音乐等）并解析结构化元数据
 - **统计面板** — 查看消息数、图片数等统计信息
+- **增量备份** — 内置定时备份 SQLite 与图片，支持按天全量 + 日内增量
 - **灵活配置** — 支持全量监控或指定群/私聊监控
 - **异步存储** — 基于 SQLAlchemy + aiosqlite 的异步数据库，不阻塞消息处理
 
@@ -110,6 +111,15 @@ plugin:
       forward:
         max_depth: 10                 # 合并转发消息最大递归深度
         parse_content: true           # 是否解析转发内容
+      backup:
+        enabled: true                 # 是否启用定时备份
+        output_dir: data/backups      # 备份输出目录（相对于插件工作目录）
+        keep_last: 7                  # 保留最近 N 个全量链
+        full_interval_days: 7         # 每隔 N 天执行一次全量备份
+        full_time: "03:00"            # 全量备份时间（HH:MM）
+        incremental_times:            # 每日增量备份时间列表
+          - "12:00"
+          - "18:00"
 ```
 
 ## 使用
@@ -132,6 +142,23 @@ uv run ncatbot run
 
 > 命令前缀支持：`recorder`、`/recorder`、`r`、`/r`（不区分大小写）
 
+### 备份工具
+
+备份由插件自动执行；如需查看或恢复归档，可使用：
+
+```bash
+python scripts/backup_tool.py list --dir data/qq_recorder/data/backups
+python scripts/backup_tool.py restore \
+  --archive <backup.zip> \
+  --db-path <recorder.db> \
+  --images-dir <images-dir>
+```
+
+全量归档包含 SQLite 一致性快照和全部图片。增量归档也会始终包含一份
+SQLite 一致性快照，图片则按上一次归档后的新增、变更和删除差异记录；
+恢复某个增量归档时，它依赖的父归档链必须仍在同一备份目录中。恢复前请先停止
+正在使用目标数据库或图片目录的机器人进程。
+
 ## 项目结构
 
 ```
@@ -142,6 +169,7 @@ QQRecorder/
 ├── config.yaml                 # NcatBot 主配置
 ├── scripts/
 │   ├── export_db.py            # 数据库导出与查询工具
+│   ├── backup_tool.py          # 备份归档查看与恢复工具
 │   ├── fix_image_extensions.py # 图片格式修复工具（v1.1.2 迁移用）
 │   ├── fix_newline_escaping.py # 换行符转义修复工具（v1.1.3 迁移用）
 │   ├── fix_image_duplicates.py # 图片重复记录修复工具（v1.2.4 迁移用）
@@ -360,6 +388,13 @@ python scripts/fix_image_extensions.py            # 执行
 最终置信度 ≥ 0.7 则标记为表情，存储在 `images.is_sticker` 字段。
 
 ## 更新日志
+
+### v1.4.0
+
+- **新增**：定时全量/增量备份，归档 SQLite 一致性快照与下载图片，支持配置全量间隔、每日执行时间和保留链数
+- **新增**：`scripts/backup_tool.py` — 查看备份归档并按全量/增量父链恢复数据库与图片
+- **修复**：增量归档始终携带 SQLite 快照，避免 WAL 模式下仅主库文件未变化时漏掉新消息
+- **修复**：恢复时数据库与图片目录采用双目标回滚，避免其中一步失败后留下半恢复状态
 
 ### v1.3.2
 

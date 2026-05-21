@@ -1,6 +1,6 @@
 # QQRecorder Plugin
 
-NcatBot plugin that silently records QQ group/private messages to SQLite with image download, forward parsing, sticker detection, and app share parsing. 13 source files, 1 test file. Python 3.12+, async throughout.
+NcatBot plugin that silently records QQ group/private messages to SQLite with image download, forward parsing, sticker detection, app share parsing, and scheduled backup/restore. 14 source files, 2 test files. Python 3.12+, async throughout.
 
 ## DATA FLOW
 
@@ -29,13 +29,15 @@ plugins/qq_recorder/
 ├── storage.py             # MessageStorage: all async DB operations
 ├── message_parser.py      # Segment parsing → ParsedMessage DTO
 ├── image_handler.py       # Image download + format detection + save
+├── backup.py              # Full/incremental SQLite + image backup and restore chains
 ├── forward_parser.py      # Recursive forward node parsing
 ├── sticker_detector.py    # 3-layer sticker detection cascade
 ├── text_utils.py          # Control char escape/unescape for DB storage
 ├── __init__.py             # Empty (package marker)
 └── tests/
     ├── __init__.py
-    └── test_sticker_detection.py  # 8 unit tests (only test file)
+    ├── test_backup.py             # Backup scheduler/archive/restore tests
+    └── test_sticker_detection.py  # Sticker detection unit tests
 ```
 
 ## MODULES
@@ -91,5 +93,5 @@ plugins/qq_recorder/
 - `sub_type=1` in CQ码 raw_message (e.g., `[CQ:image,sub_type=1,...]`) can also be detected via regex on raw_message string — this catches cases where segment_data parsing loses the field.
 - `is_sticker` defaults to `False` (0) for all records — only explicitly set to `True` when confidence ≥ 0.7. Backfilled records have confidence 0.95 when detected via metadata/text, 0.5-0.85 when detected via heuristics.
 - The `face` segment type is a separate QQ emoji system, NOT related to image-type stickers — do not conflate `face` segments with `image` sticker detection.
-- Plugin version is declared in both `plugin.py` (`version = "1.3.2"`) and `manifest.toml` (`version = "1.3.2"`) — keep them in sync.
-- Tests: `uv run pytest plugins/qq_recorder/tests/` — only 8 unit tests for sticker_detector.py. No conftest, fixtures, or mocks.
+- Plugin version is declared in both `plugin.py` (`version = "1.4.0"`) and `manifest.toml` (`version = "1.4.0"`) — keep them in sync.
+- Tests: `uv run pytest plugins/qq_recorder/tests/` — backup and sticker detection tests live under the plugin test package. No conftest, fixtures, or mocks.

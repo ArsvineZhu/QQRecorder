@@ -2,9 +2,10 @@ adapters:
 - config:
     enable_webui: true
     webui_token: R3wJfA6WyLN.LpxK
-    webui_uri: http://localhost:6099
+    webui_uri: http://127.0.0.1:6099
     ws_token: napcat_ws
-    ws_uri: ws://localhost:3001
+    ws_listen_ip: 127.0.0.1
+    ws_uri: ws://127.0.0.1:3002
   enabled: true
   platform: qq
   type: napcat
@@ -45,6 +46,16 @@ plugin:
       forward:
         max_depth: 8
         parse_content: true
+      backup:
+        enabled: true
+        output_dir: data/backups
+        keep_last: 7
+        full_interval_days: 7
+        full_time: "14:00"
+        incremental_times:
+          - "12:00"
+          - "18:00"
+          - "23:00"
   plugin_whitelist: []
   plugins_dir: plugins
   skip_pip_install_confirm: false

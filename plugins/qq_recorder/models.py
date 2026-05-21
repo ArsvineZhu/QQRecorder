@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import (
     Boolean,
@@ -166,6 +167,10 @@ class MonitoredChat(Base):
 
 
 async def init_engine(db_path: str):
-    engine = create_async_engine(db_path, echo=False)
+    if "://" in db_path:
+        db_url = db_path
+    else:
+        db_url = f"sqlite+aiosqlite:///{Path(db_path).resolve().as_posix()}"
+    engine = create_async_engine(db_url, echo=False)
     AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     return engine, AsyncSessionLocal
