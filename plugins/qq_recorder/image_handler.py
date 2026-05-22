@@ -132,12 +132,16 @@ async def download_image(
                 raise ImageDownloadError(
                     f"File too large: {content_length} bytes > {max_size} bytes"
                 )
-            data = await response.read()
-            if len(data) > max_size:
-                raise ImageDownloadError(
-                    f"File too large: {len(data)} bytes > {max_size} bytes"
-                )
-            return data, dict(response.headers)
+            chunks: list[bytes] = []
+            total_bytes = 0
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                total_bytes += len(chunk)
+                if total_bytes > max_size:
+                    raise ImageDownloadError(
+                        f"File too large: {total_bytes} bytes > {max_size} bytes"
+                    )
+                chunks.append(chunk)
+            return b"".join(chunks), dict(response.headers)
     except Exception as e:
         raise ImageDownloadError(f"Download failed: {str(e)}") from e
     finally:
@@ -161,6 +165,7 @@ async def process_image(
     config_storage_dir: str,
     config_image: ImageConfig,
     session: aiohttp.ClientSession | None = None,
+    download_semaphore: asyncio.Semaphore | None = None,
 ) -> ImageResult:
     try:
         if not image_info.file_url:
@@ -171,12 +176,21 @@ async def process_image(
                 success=False,
                 error="Empty URL",
             )
-        image_data, headers = await download_image(
-            image_info.file_url,
-            timeout=config_image.timeout,
-            max_size=config_image.max_file_size,
-            session=session,
-        )
+
+        async def _download() -> tuple[bytes, dict]:
+            return await download_image(
+                image_info.file_url,
+                timeout=config_image.timeout,
+                max_size=config_image.max_file_size,
+                session=session,
+            )
+
+        if download_semaphore is None:
+            image_data, headers = await _download()
+        else:
+            async with download_semaphore:
+                image_data, headers = await _download()
+
         md5_hash = calculate_md5(image_data)
         content_type = headers.get("Content-Type", "")
         filename = generate_filename(
@@ -205,7 +219,10 @@ async def process_image(
 
 
 async def process_images(
-    images: list[ImageInfo], config_storage_dir: str, config_image: ImageConfig
+    images: list[ImageInfo],
+    config_storage_dir: str,
+    config_image: ImageConfig,
+    download_semaphore: asyncio.Semaphore | None = None,
 ) -> list[ImageResult]:
     results = []
     if not config_image.download:
@@ -235,7 +252,11 @@ async def process_images(
                 )
                 continue
             result = await process_image(
-                img, config_storage_dir, config_image, session=session
+                img,
+                config_storage_dir,
+                config_image,
+                session=session,
+                download_semaphore=download_semaphore,
             )
             results.append(result)
     return results

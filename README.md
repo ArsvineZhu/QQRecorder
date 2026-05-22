@@ -86,7 +86,7 @@ pip install -e .
 
 ### 4. 配置插件
 
-编辑 `recorder/config.yaml`：
+编辑项目根目录 `config.yaml` 中的 `plugin.plugin_configs.qq_recorder`：
 
 ```yaml
 bot_uin: '你的QQ号'              # 机器人 QQ 号
@@ -104,10 +104,17 @@ plugin:
       storage:
         database: data/recorder.db    # 数据库路径（相对于插件工作目录）
         images_dir: data/images       # 图片存储目录（相对于插件工作目录）
+        lock_retry:
+          enabled: true               # 启用 SQLite 锁冲突重试
+          max_retries: 5              # 最大重试次数
+          base_delay_ms: 50           # 首次退避毫秒（指数退避）
       image:
         download: true                # 是否下载图片
         timeout: 30                   # 下载超时时间（秒）
-        max_file_size: 20971520       # 最大文件大小（字节），默认 20MB
+        max_file_size: 52428800       # 最大文件大小（字节），默认 50MB
+      processing:
+        max_inflight: 48              # 消息处理并发上限（背压）
+        image_download_concurrency: 4 # 图片下载并发上限
       forward:
         max_depth: 10                 # 合并转发消息最大递归深度
         parse_content: true           # 是否解析转发内容
@@ -340,8 +347,10 @@ data/images/
 ```
 
 - 文件名基于内容 MD5 哈希，自动去重
+- 同 URL 且本地文件存在时会直接复用本地路径，跳过重复下载
 - 保留图片原始格式，GIF 动图不会被转为静态 JPG
-- 支持配置下载超时与文件大小上限
+- 下载采用流式读取，超过大小上限会立即中断
+- 支持配置下载超时与文件大小上限（默认 50MB）
 
 ## 技术栈
 
@@ -353,9 +362,9 @@ data/images/
 
 ## 常见问题
 
-**Q: 项目中有两个 config.yaml，有什么区别？**
+**Q: 插件配置放在哪里？**
 
-项目根目录的 `config.yaml` 是 NcatBot 框架的主配置文件，用于设置机器人 QQ 号、管理员等基础信息。`recorder/config.yaml` 是插件专属配置，用于设置监控目标、图片下载参数、合并转发解析深度等。
+插件配置位于项目根目录 `config.yaml` 的 `plugin.plugin_configs.qq_recorder` 下，不需要单独的 `recorder/config.yaml`。
 
 **Q: 数据库路径和图片路径是相对于哪里？**
 
@@ -395,6 +404,15 @@ python scripts/fix_image_extensions.py            # 执行
 - **新增**：`scripts/backup_tool.py` — 查看备份归档并按全量/增量父链恢复数据库与图片
 - **修复**：增量归档始终携带 SQLite 快照，避免 WAL 模式下仅主库文件未变化时漏掉新消息
 - **修复**：恢复时数据库与图片目录采用双目标回滚，避免其中一步失败后留下半恢复状态
+
+### v1.5.0
+
+- **新增**：消息处理并发闸门（`processing.max_inflight`），高并发刷屏时启用背压，避免任务无限堆积
+- **新增**：图片下载全局并发限制（`processing.image_download_concurrency`）
+- **新增**：SQLite 锁冲突重试配置（`storage.lock_retry`），写路径遇到 `database is locked` 时指数退避重试
+- **优化**：图片下载改为流式读取并按阈值即时截断，降低大文件峰值内存压力
+- **优化**：图片大小上限默认调整为 **50MB**（`52428800`）
+- **优化**：图片支持 URL 快速命中复用；同 URL 且本地文件存在时跳过重复下载
 
 ### v1.3.2
 

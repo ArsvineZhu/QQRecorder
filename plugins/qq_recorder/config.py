@@ -21,13 +21,27 @@ class TargetConfig:
 class StorageConfig:
     database: str = "data/recorder.db"
     images_dir: str = "data/images"
+    lock_retry: "LockRetryConfig" = field(default_factory=lambda: LockRetryConfig())
+
+
+@dataclass
+class LockRetryConfig:
+    enabled: bool = True
+    max_retries: int = 5
+    base_delay_ms: int = 50
 
 
 @dataclass
 class ImageConfig:
     download: bool = True
     timeout: int = 30
-    max_file_size: int = 20971520
+    max_file_size: int = 52428800
+
+
+@dataclass
+class ProcessingConfig:
+    max_inflight: int = 48
+    image_download_concurrency: int = 4
 
 
 @dataclass
@@ -52,6 +66,7 @@ class RecorderSettings:
     monitor_all: bool = True
     storage: StorageConfig = field(default_factory=StorageConfig)
     image: ImageConfig = field(default_factory=ImageConfig)
+    processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     forward: ForwardConfig = field(default_factory=ForwardConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
 
@@ -59,8 +74,13 @@ class RecorderSettings:
 DEFAULT_CONFIG = {
     "monitor_all": True,
     "targets": {"groups": [], "private": []},
-    "storage": {"database": "data/recorder.db", "images_dir": "data/images"},
-    "image": {"download": True, "timeout": 30, "max_file_size": 20971520},
+    "storage": {
+        "database": "data/recorder.db",
+        "images_dir": "data/images",
+        "lock_retry": {"enabled": True, "max_retries": 5, "base_delay_ms": 50},
+    },
+    "image": {"download": True, "timeout": 30, "max_file_size": 52428800},
+    "processing": {"max_inflight": 48, "image_download_concurrency": 4},
     "forward": {"max_depth": 10, "parse_content": True},
     "backup": {
         "enabled": True,
@@ -76,7 +96,9 @@ DEFAULT_CONFIG = {
 def build_config(raw: dict) -> RecorderSettings:
     targets_data = raw.get("targets", {})
     storage_data = raw.get("storage", {})
+    lock_retry_data = storage_data.get("lock_retry", {})
     image_data = raw.get("image", {})
+    processing_data = raw.get("processing", {})
     forward_data = raw.get("forward", {})
     backup_data = raw.get("backup", {})
 
@@ -84,16 +106,37 @@ def build_config(raw: dict) -> RecorderSettings:
         groups=targets_data.get("groups", []),
         private=targets_data.get("private", []),
     )
+    lock_retry = LockRetryConfig(
+        enabled=lock_retry_data.get(
+            "enabled", DEFAULT_CONFIG["storage"]["lock_retry"]["enabled"]
+        ),
+        max_retries=lock_retry_data.get(
+            "max_retries", DEFAULT_CONFIG["storage"]["lock_retry"]["max_retries"]
+        ),
+        base_delay_ms=lock_retry_data.get(
+            "base_delay_ms", DEFAULT_CONFIG["storage"]["lock_retry"]["base_delay_ms"]
+        ),
+    )
     storage = StorageConfig(
         database=storage_data.get("database", DEFAULT_CONFIG["storage"]["database"]),
         images_dir=storage_data.get(
             "images_dir", DEFAULT_CONFIG["storage"]["images_dir"]
         ),
+        lock_retry=lock_retry,
     )
     image = ImageConfig(
         download=image_data.get("download", True),
         timeout=image_data.get("timeout", 30),
-        max_file_size=image_data.get("max_file_size", 20971520),
+        max_file_size=image_data.get("max_file_size", 52428800),
+    )
+    processing = ProcessingConfig(
+        max_inflight=processing_data.get(
+            "max_inflight", DEFAULT_CONFIG["processing"]["max_inflight"]
+        ),
+        image_download_concurrency=processing_data.get(
+            "image_download_concurrency",
+            DEFAULT_CONFIG["processing"]["image_download_concurrency"],
+        ),
     )
     forward = ForwardConfig(
         max_depth=forward_data.get("max_depth", 10),
@@ -121,6 +164,7 @@ def build_config(raw: dict) -> RecorderSettings:
         monitor_all=raw.get("monitor_all", True),
         storage=storage,
         image=image,
+        processing=processing,
         forward=forward,
         backup=backup,
     )
@@ -134,10 +178,18 @@ def _validate_config(config: RecorderSettings) -> None:  # noqa: C901
         raise ValueError("storage.database must be a non-empty string")
     if not config.storage.images_dir.strip():
         raise ValueError("storage.images_dir must be a non-empty string")
+    if config.storage.lock_retry.max_retries < 0:
+        raise ValueError("storage.lock_retry.max_retries must be >= 0")
+    if config.storage.lock_retry.base_delay_ms <= 0:
+        raise ValueError("storage.lock_retry.base_delay_ms must be > 0")
     if config.image.timeout <= 0:
         raise ValueError("image.timeout must be > 0")
     if config.image.max_file_size <= 0:
         raise ValueError("image.max_file_size must be > 0")
+    if config.processing.max_inflight <= 0:
+        raise ValueError("processing.max_inflight must be > 0")
+    if config.processing.image_download_concurrency <= 0:
+        raise ValueError("processing.image_download_concurrency must be > 0")
     if config.forward.max_depth <= 0 or config.forward.max_depth > 50:
         raise ValueError("forward.max_depth must be > 0 and <= 50")
     if not config.backup.output_dir.strip():

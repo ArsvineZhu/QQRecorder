@@ -14,7 +14,7 @@ from .storage import MessageStorage
 
 class QQRecorderPlugin(NcatBotPlugin):
     name = "qq_recorder"
-    version = "1.4.1"
+    version = "1.5.0"
     author = "Arsvine Zhu"
     description = "静默 QQ 消息记录器"
 
@@ -46,7 +46,11 @@ class QQRecorderPlugin(NcatBotPlugin):
         os.makedirs(backup_dir, exist_ok=True)
         settings.backup.output_dir = backup_dir
 
-        self.storage = MessageStorage(settings.storage.database)
+        self.storage = MessageStorage(
+            settings.storage.database,
+            lock_retry=settings.storage.lock_retry,
+            logger=self.logger,
+        )
         await self.storage.init_db()
 
         self._command_handler = CommandHandler(self.storage, self.logger)

@@ -36,13 +36,20 @@ plugin:
       targets:
         groups: ["1072706649"]
         private: ["2162371684"]
-      storage:
-        database: data/recorder.db
-        images_dir: data/images
       image:
         download: true
         timeout: 60
-        max_file_size: 209715200
+        max_file_size: 52428800
+      processing:
+        max_inflight: 48
+        image_download_concurrency: 4
+      storage:
+        database: data/recorder.db
+        images_dir: data/images
+        lock_retry:
+          enabled: true
+          max_retries: 5
+          base_delay_ms: 50
       forward:
         max_depth: 8
         parse_content: true

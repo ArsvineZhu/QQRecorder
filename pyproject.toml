@@ -1,6 +1,6 @@
 [project]
 name = "qqrecorder"
-version = "1.4.1"
+version = "1.5.0"
 description = "静默 QQ 消息记录器 —— 基于 NcatBot 的 QQ 消息自动记录插件"
 readme = "README.md"
 requires-python = ">=3.12"

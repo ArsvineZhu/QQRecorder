@@ -7,12 +7,13 @@ NcatBot plugin that silently records QQ group/private messages to SQLite with im
 ```
 NcatBot Event → events.event_to_dict() → processors.MessageProcessor.process_message()
   ├─ config.is_chat_monitored() → filter
+  ├─ processing.max_inflight semaphore → backpressure
   ├─ message_parser.parse_message(raw_message) → ParsedMessage (images, replies, forwards, ats, app_shares)
   │   ├─ extract_images() → sticker_detector.combined_detection() → ImageInfo(is_sticker, sticker_confidence)
   │   └─ extract_app_shares() → HTML unescape → JSON parse → AppShareInfo
   ├─ forward_parser: api.qq.get_forward_msg() → parse_forward_response() → flatten_forward_nodes()
   ├─ storage.save_message() → Message + related records in SQLite
-  └─ image_handler.process_images() → download → detect extension → save → update DB
+  └─ image_handler.process_images() → URL fast-path reuse OR stream download → detect extension → save → update DB
 ```
 
 ## STRUCTURE
@@ -63,7 +64,11 @@ plugins/qq_recorder/
 - **Command prefixes**: `("recorder", "/recorder", "r", "/r")` — registered via `@registrar.qq.on_group_command()` and `@registrar.qq.on_private_command()`.
 - **Extension detection order**: URL ext → Content-Type → magic bytes → fallback `.jpg`. Never skip a layer.
 - **MD5 filenames**: Images saved as `<md5hash>.<ext>` for auto-dedup. Hash is of binary content, not URL.
+- **URL fast-path reuse**: If same `file_url` has a downloaded record whose local file still exists, reuse local path and skip re-download.
 - **Forward depth**: Configurable via `forward.max_depth` (default 10, max 50). Prevents infinite recursion.
+- **Backpressure**: Message pipeline is guarded by `processing.max_inflight` semaphore to cap in-flight processing.
+- **Image download concurrency**: Global semaphore `processing.image_download_concurrency` caps concurrent downloads.
+- **SQLite lock retry**: Writes use `storage.lock_retry` exponential backoff for `database is locked`.
 - **Per-message error isolation**: `MessageProcessor.process_message()` wraps everything in try/except — one bad message never kills the plugin.
 - **Sticker detection order**: sub_type metadata (primary, 0.95) → CQ码 text pattern (0.95) → heuristic format+size (0.7-0.85). Combined confidence ≥ 0.7 marks as sticker.
 - **Sticker detection invoked in parse**: `extract_images()` in `message_parser.py` calls `combined_detection()` — no separate step in the pipeline.
@@ -85,6 +90,7 @@ plugins/qq_recorder/
 ## GOTCHAS
 
 - `ImageInfo.file_unique` is often `"0"` from QQ — don't rely on it for dedup. Use `file_url` for querying and MD5 hash for dedup.
+- Default image size limit is 50MB (`image.max_file_size=52428800`), and download is stream-checked against limit.
 - `event_to_dict()` manually extracts fields because NcatBot event objects don't serialize cleanly.
 - Storage paths in config are relative to `self.workspace` (plugin's data dir), not project root.
 - `ForwardMessage` is self-referential (`parent_forward_id` FK to self) — tree is stored as adjacency list.
@@ -93,5 +99,5 @@ plugins/qq_recorder/
 - `sub_type=1` in CQ码 raw_message (e.g., `[CQ:image,sub_type=1,...]`) can also be detected via regex on raw_message string — this catches cases where segment_data parsing loses the field.
 - `is_sticker` defaults to `False` (0) for all records — only explicitly set to `True` when confidence ≥ 0.7. Backfilled records have confidence 0.95 when detected via metadata/text, 0.5-0.85 when detected via heuristics.
 - The `face` segment type is a separate QQ emoji system, NOT related to image-type stickers — do not conflate `face` segments with `image` sticker detection.
-- Plugin version is declared in both `plugin.py` (`version = "1.4.1"`) and `manifest.toml` (`version = "1.4.1"`) — keep them in sync.
+- Plugin version is declared in both `plugin.py` (`version = "1.5.0"`) and `manifest.toml` (`version = "1.5.0"`) — keep them in sync.
 - Tests: `uv run pytest plugins/qq_recorder/tests/` — backup and sticker detection tests live under the plugin test package. No conftest, fixtures, or mocks.

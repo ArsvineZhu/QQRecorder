@@ -166,11 +166,15 @@ class MonitoredChat(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
-async def init_engine(db_path: str):
+async def init_engine(db_path: str, sqlite_timeout: int = 10):
     if "://" in db_path:
         db_url = db_path
     else:
         db_url = f"sqlite+aiosqlite:///{Path(db_path).resolve().as_posix()}"
-    engine = create_async_engine(db_url, echo=False)
+    engine = create_async_engine(
+        db_url,
+        echo=False,
+        connect_args={"timeout": sqlite_timeout},
+    )
     AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     return engine, AsyncSessionLocal
