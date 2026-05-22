@@ -23,6 +23,17 @@ required = true
 """.strip()
 
 
+def _config_text_no_exclude(rule_path: str, rule_match: str, rule_replace: str) -> str:
+    return f"""
+[[rules]]
+name = "rule"
+path = "{rule_path}"
+match = '{rule_match}'
+replace = '{rule_replace}'
+required = true
+""".strip()
+
+
 def test_validate_version_accepts_expected_formats():
     assert validate_version("1.2.3")
     assert validate_version("10.20.30.post4")
@@ -146,3 +157,45 @@ def test_check_mode_returns_nonzero_when_different(tmp_path: Path):
         root=tmp_path,
     )
     assert code == 1
+
+
+def test_protected_readme_rule_is_blocked_by_default(tmp_path: Path):
+    _write(tmp_path / "README.md", "### v1.4.1\n")
+    config = _config_text_no_exclude(
+        "README.md",
+        r"(?m)^### v[0-9]+\.[0-9]+\.[0-9]+$",
+        "### v{version}",
+    )
+    _write(tmp_path / "rules.toml", config)
+
+    code = run_set(
+        version="1.5.0",
+        config_path=tmp_path / "rules.toml",
+        apply=False,
+        check=False,
+        verbose=False,
+        root=tmp_path,
+    )
+    assert code == 2
+
+
+def test_protected_readme_rule_can_be_overridden_explicitly(tmp_path: Path):
+    _write(tmp_path / "README.md", "### v1.4.1\n")
+    config = _config_text_no_exclude(
+        "README.md",
+        r"(?m)^### v[0-9]+\.[0-9]+\.[0-9]+$",
+        "### v{version}",
+    )
+    _write(tmp_path / "rules.toml", config)
+
+    code = run_set(
+        version="1.5.0",
+        config_path=tmp_path / "rules.toml",
+        apply=True,
+        check=False,
+        verbose=False,
+        root=tmp_path,
+        allow_protected_writes=True,
+    )
+    assert code == 0
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "### v1.5.0\n"

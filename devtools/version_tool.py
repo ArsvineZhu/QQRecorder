@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:\.post\d+)?$")
+PROTECTED_PATH_GLOBS = ("README*", "AGENTS*", "docs/**")
 
 
 @dataclass(slots=True)
@@ -106,6 +107,14 @@ def _is_excluded(path: Path, exclude_globs: list[str]) -> bool:
     return False
 
 
+def _is_protected_path(path: Path) -> bool:
+    posix_path = path.as_posix()
+    for pattern in PROTECTED_PATH_GLOBS:
+        if fnmatch.fnmatch(posix_path, pattern) or fnmatch.fnmatch(path.name, pattern):
+            return True
+    return False
+
+
 def _build_diff(change: FileChange) -> str:
     return "".join(
         difflib.unified_diff(
@@ -126,6 +135,7 @@ def run_set(  # noqa: C901
     check: bool,
     verbose: bool,
     root: Path,
+    allow_protected_writes: bool = False,
 ) -> int:
     if apply and check:
         print("--apply and --check cannot be used together", file=sys.stderr)
@@ -146,6 +156,7 @@ def run_set(  # noqa: C901
         config=config,
         root=root,
         verbose=verbose,
+        allow_protected_writes=allow_protected_writes,
     )
 
     if errors:
@@ -181,7 +192,12 @@ def run_set(  # noqa: C901
 
 
 def _evaluate_rules(
-    *, version: str, config: RuleConfig, root: Path, verbose: bool
+    *,
+    version: str,
+    config: RuleConfig,
+    root: Path,
+    verbose: bool,
+    allow_protected_writes: bool,
 ) -> tuple[list[FileChange], list[str]]:
     changes: list[FileChange] = []
     errors: list[str] = []
@@ -192,6 +208,7 @@ def _evaluate_rules(
             root=root,
             exclude_globs=config.exclude_globs,
             verbose=verbose,
+            allow_protected_writes=allow_protected_writes,
         )
         if error is not None:
             errors.append(error)
@@ -208,8 +225,15 @@ def _evaluate_rule(  # noqa: C901
     root: Path,
     exclude_globs: list[str],
     verbose: bool,
+    allow_protected_writes: bool,
 ) -> tuple[FileChange | None, str | None]:
     relative_path = Path(rule.path)
+    if _is_protected_path(relative_path) and not allow_protected_writes:
+        return (
+            None,
+            f"Rule points to protected path: {rule.path} "
+            "(use --allow-protected-writes to override)",
+        )
     if _is_excluded(relative_path, exclude_globs):
         return None, f"Rule points to excluded path: {rule.path}"
 
@@ -283,6 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print per-rule details",
     )
+    set_parser.add_argument(
+        "--allow-protected-writes",
+        action="store_true",
+        help="Allow writing to protected docs paths such as README/AGENTS/docs",
+    )
 
     return parser
 
@@ -299,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
             check=bool(args.check),
             verbose=bool(args.verbose),
             root=Path.cwd(),
+            allow_protected_writes=bool(args.allow_protected_writes),
         )
 
     parser.error("Unknown command")

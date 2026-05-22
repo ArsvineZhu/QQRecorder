@@ -12,5 +12,6 @@ Notes:
 
 - Default mode is dry-run and prints unified diffs.
 - Use `--apply` to write files.
+- Protected paths (`README*`, `AGENTS*`, `docs/**`) are blocked by default.
+- Use `--allow-protected-writes` only when you intentionally need to edit protected docs.
 - Rule configuration is in `devtools/version_rules.toml`.
-
