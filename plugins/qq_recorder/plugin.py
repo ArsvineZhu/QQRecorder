@@ -14,7 +14,7 @@ from .storage import MessageStorage
 
 class QQRecorderPlugin(NcatBotPlugin):
     name = "qq_recorder"
-    version = "1.4.0"
+    version = "1.4.1"
     author = "Arsvine Zhu"
     description = "静默 QQ 消息记录器"
 

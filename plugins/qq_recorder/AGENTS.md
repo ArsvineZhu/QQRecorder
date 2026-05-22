@@ -93,5 +93,5 @@ plugins/qq_recorder/
 - `sub_type=1` in CQ码 raw_message (e.g., `[CQ:image,sub_type=1,...]`) can also be detected via regex on raw_message string — this catches cases where segment_data parsing loses the field.
 - `is_sticker` defaults to `False` (0) for all records — only explicitly set to `True` when confidence ≥ 0.7. Backfilled records have confidence 0.95 when detected via metadata/text, 0.5-0.85 when detected via heuristics.
 - The `face` segment type is a separate QQ emoji system, NOT related to image-type stickers — do not conflate `face` segments with `image` sticker detection.
-- Plugin version is declared in both `plugin.py` (`version = "1.4.0"`) and `manifest.toml` (`version = "1.4.0"`) — keep them in sync.
+- Plugin version is declared in both `plugin.py` (`version = "1.4.1"`) and `manifest.toml` (`version = "1.4.1"`) — keep them in sync.
 - Tests: `uv run pytest plugins/qq_recorder/tests/` — backup and sticker detection tests live under the plugin test package. No conftest, fixtures, or mocks.

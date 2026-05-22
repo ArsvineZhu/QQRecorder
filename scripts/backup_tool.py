@@ -12,14 +12,95 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
+import socket
+import sqlite3
 import sys
 import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
+
+
+def _extract_runtime_uris(config_path: Path) -> dict[str, str]:
+    if not config_path.exists():
+        return {}
+
+    uri_pattern = re.compile(
+        r"^\s*(ws_uri|webui_uri)\s*:\s*['\"]?([^'\"\s#]+)['\"]?\s*$"
+    )
+    uris: dict[str, str] = {}
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        match = uri_pattern.match(line)
+        if match:
+            uris[match.group(1)] = match.group(2)
+    return uris
+
+
+def _uri_is_reachable(uri: str, timeout: float = 0.3) -> bool:
+    parsed = urlparse(uri)
+    host = parsed.hostname
+    if not host:
+        return False
+
+    port = parsed.port
+    if port is None:
+        if parsed.scheme in {"wss", "https"}:
+            port = 443
+        else:
+            port = 80
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _db_is_busy(db_path: Path) -> tuple[bool, str]:
+    if not db_path.exists():
+        return False, ""
+
+    try:
+        connection = sqlite3.connect(db_path, timeout=0, isolation_level=None)
+    except sqlite3.Error:
+        return False, ""
+
+    try:
+        connection.execute("BEGIN EXCLUSIVE")
+    except sqlite3.OperationalError as exc:
+        return True, str(exc)
+    finally:
+        try:
+            connection.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        connection.close()
+
+    return False, ""
+
+
+def _restore_blockers(db_path: Path, config_path: Path) -> list[str]:
+    blockers: list[str] = []
+
+    runtime_uris = _extract_runtime_uris(config_path)
+    reachable = [
+        f"{name}={uri}" for name, uri in runtime_uris.items() if _uri_is_reachable(uri)
+    ]
+    if reachable:
+        blockers.append(
+            "Detected active runtime endpoints: " + ", ".join(sorted(reachable))
+        )
+
+    busy, reason = _db_is_busy(db_path)
+    if busy:
+        blockers.append(f"Target SQLite database is busy/locked: {reason}")
+
+    return blockers
 
 
 def _load_manifest(archive_path: Path) -> dict:
@@ -45,6 +126,19 @@ def _build_parser() -> argparse.ArgumentParser:
     restore_parser.add_argument("--db-path", required=True, help="Target SQLite path")
     restore_parser.add_argument(
         "--images-dir", required=True, help="Target images directory"
+    )
+    restore_parser.add_argument(
+        "--config",
+        default=str(PROJECT_DIR / "config.yaml"),
+        help=(
+            "Project config path used for runtime status checks "
+            "(default: ./config.yaml)"
+        ),
+    )
+    restore_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass runtime status checks and force restore",
     )
 
     return parser
@@ -76,10 +170,30 @@ def _cmd_list(backup_dir: Path) -> int:
     return 0
 
 
-def _cmd_restore(archive: Path, db_path: Path, images_dir: Path) -> int:
+def _cmd_restore(
+    archive: Path, db_path: Path, images_dir: Path, config_path: Path, force: bool
+) -> int:
     if not archive.exists():
         print(f"Backup archive not found: {archive}", file=sys.stderr)
         return 1
+
+    if not force:
+        blockers = _restore_blockers(db_path, config_path)
+        if blockers:
+            print(
+                "Restore blocked: runtime precondition check failed.",
+                file=sys.stderr,
+            )
+            for item in blockers:
+                print(f"  - {item}", file=sys.stderr)
+            print(
+                (
+                    "Stop the bot/runtime and retry. "
+                    "Use --force only if you accept the risk."
+                ),
+                file=sys.stderr,
+            )
+            return 2
 
     from plugins.qq_recorder.backup import BackupConfig, BackupManager
 
@@ -105,7 +219,11 @@ def main() -> int:
         return _cmd_list(Path(args.backup_dir))
     if args.command == "restore":
         return _cmd_restore(
-            Path(args.archive), Path(args.db_path), Path(args.images_dir)
+            Path(args.archive),
+            Path(args.db_path),
+            Path(args.images_dir),
+            Path(args.config),
+            bool(args.force),
         )
 
     parser.error("Unknown command")
