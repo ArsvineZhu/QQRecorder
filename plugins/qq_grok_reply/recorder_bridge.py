@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import selectinload
@@ -8,6 +9,7 @@ from .compat import import_sibling_plugin_module
 _models = import_sibling_plugin_module("qq_recorder.models")
 _storage = import_sibling_plugin_module("qq_recorder.storage")
 Message = _models.Message
+ForwardMessage = _models.ForwardMessage
 init_engine = _models.init_engine
 MessageStorage = _storage.MessageStorage
 _ensure_message_sender_columns = _storage._ensure_message_sender_columns
@@ -56,12 +58,27 @@ class RecorderBridge:
     async def get_recent(
         self, chat_type: str, chat_id: str, limit: int
     ) -> list[Message]:
+        return await self.get_candidates(chat_type, chat_id, limit=limit)
+
+    async def get_candidates(
+        self,
+        chat_type: str,
+        chat_id: str,
+        *,
+        limit: int,
+        since_minutes: int | None = None,
+        before_or_at: datetime | None = None,
+    ) -> list[Message]:
         assert self.storage is not None, "connect_existing() not called"
         async with self.storage._session() as session:
             stmt = (
                 select(Message)
                 .options(
                     selectinload(Message.images),
+                    selectinload(Message.replies),
+                    selectinload(Message.forward_messages).options(
+                        selectinload(ForwardMessage.children)
+                    ),
                     selectinload(Message.at_mentions),
                     selectinload(Message.app_shares),
                 )
@@ -75,6 +92,12 @@ class RecorderBridge:
             else:
                 stmt = stmt.where(
                     Message.chat_type == "private", Message.user_id == chat_id
+                )
+            if before_or_at is not None:
+                stmt = stmt.where(Message.timestamp <= before_or_at)
+            if since_minutes is not None and before_or_at is not None:
+                stmt = stmt.where(
+                    Message.timestamp >= before_or_at - timedelta(minutes=since_minutes)
                 )
             result = await session.execute(stmt)
             return list(result.scalars().all())

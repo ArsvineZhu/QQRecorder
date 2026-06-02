@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -25,6 +25,14 @@ class ReplyTrace(Base):
     trigger_reason: Mapped[str] = mapped_column(String, nullable=False)
     context_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     prompt_variant: Mapped[str] = mapped_column(String, nullable=False)
+    topic_title: Mapped[str] = mapped_column(String, default="")
+    topic_summary: Mapped[str] = mapped_column(Text, default="")
+    topic_participants_json: Mapped[str] = mapped_column(Text, default="[]")
+    topic_selected_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    topic_candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    topic_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    topic_error_code: Mapped[str] = mapped_column(String, default="")
+    topic_fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
     model_name: Mapped[str] = mapped_column(String, default="")
     model_request_summary: Mapped[str] = mapped_column(Text, default="")
     model_response_summary: Mapped[str] = mapped_column(Text, default="")

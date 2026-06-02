@@ -20,14 +20,34 @@ read_after_write:
   backoff_ms: [50, 100, 200, 400, 800]
 
 context:
+  mode: topic_ai
   recent_limit_group: 6
   recent_limit_private: 10
   quote_chars_group: 320
   quote_chars_private: 480
-  total_chars_group: 1200
+  total_chars_group: 6000
   total_chars_private: 2200
   recent_chars_group: 120
   recent_chars_private: 180
+  candidate_limit_group: 80
+  candidate_limit_private: 30
+  candidate_time_window_minutes_group: 45
+  candidate_time_window_minutes_private: 30
+  selected_max_messages_group: 20
+  selected_max_messages_private: 12
+  forward_max_items: 12
+  forward_max_chars: 1600
+  fallback_recent_limit_group: 16
+  fallback_recent_limit_private: 12
+
+topic_analyzer:
+  enabled: true
+  model: ""
+  temperature: 0.2
+  timeout_sec: 8
+  min_confidence: 0.45
+  fallback_to_recent: true
+  max_summary_chars: 800
 
 cooldown:
   group_chat_sec: 2.0

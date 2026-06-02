@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import json
 import os
 import time
 from typing import Any, cast
@@ -15,7 +16,7 @@ from .config import (
     build_config,
     is_chat_targeted,
 )
-from .context_builder import build_context
+from .context_builder import TopicContextError, build_context
 from .model_client import ReplyModelError, generate_reply
 from .recorder_bridge import RecorderBridge
 from .sender import SendOutcome, send_reply
@@ -125,16 +126,53 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             return
 
         assert source_msg is not None
-        ctx = await _resolve_awaitable(
-            build_context(
-                source_msg,
-                bridge,
-                self.settings,
-                event=event,
-                trigger_reason=decision_reason,
-                sender_name=_sender_name(event),
+        try:
+            ctx = await _resolve_awaitable(
+                build_context(
+                    source_msg,
+                    bridge,
+                    self.settings,
+                    event=event,
+                    trigger_reason=decision_reason,
+                    sender_name=_sender_name(event),
+                    analyzer_api=self.api,
+                )
             )
-        )
+        except TopicContextError as exc:
+            if self.settings.trace.enabled:
+                analysis = exc.analysis
+                await trace_store.insert_trace(
+                    source_message_id=str(event.message_id),
+                    source_message_db_id=getattr(source_msg, "id", None),
+                    chat_type=str(source_msg.chat_type),
+                    chat_id=str(
+                        getattr(source_msg, "group_id", None) or source_msg.user_id
+                    ),
+                    user_id=str(source_msg.user_id),
+                    decision_seed=self._decision_seed(event),
+                    decision="error",
+                    trigger_reason=decision_reason,
+                    context_ids=[str(source_msg.message_id)],
+                    prompt_variant="group_topic_ai"
+                    if str(source_msg.chat_type) == "group"
+                    else "private_contextual",
+                    topic_title=analysis.topic_title,
+                    topic_summary=analysis.topic_summary,
+                    topic_participants_json=_json_list(
+                        [
+                            f"{item.name}（{item.role}）" if item.role else item.name
+                            for item in analysis.participants
+                            if item.name
+                        ]
+                    ),
+                    topic_selected_ids_json=_json_list(analysis.selected_message_ids),
+                    topic_candidate_count=analysis.candidate_count,
+                    topic_confidence=analysis.confidence,
+                    topic_error_code=analysis.error_code,
+                    topic_fallback_used=False,
+                )
+            return
+
         trace_id = None
         if self.settings.trace.enabled:
             trace_id = await trace_store.insert_trace(
@@ -150,6 +188,14 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                 trigger_reason=decision_reason,
                 context_ids=ctx.context_ids,
                 prompt_variant=ctx.variant,
+                topic_title=ctx.topic_title,
+                topic_summary=ctx.topic_summary,
+                topic_participants_json=_json_list(ctx.topic_participants),
+                topic_selected_ids_json=_json_list(ctx.context_ids),
+                topic_candidate_count=ctx.topic_candidate_count,
+                topic_confidence=ctx.topic_confidence,
+                topic_error_code=ctx.topic_error_code,
+                topic_fallback_used=ctx.topic_fallback_used,
             )
 
         try:
@@ -288,3 +334,7 @@ def _chat_identity(event, source_msg) -> tuple[str, str]:
         or getattr(event, "user_id", "")
     )
     return chat_type, chat_id
+
+
+def _json_list(items: list[str]) -> str:
+    return json.dumps(items, ensure_ascii=False)

@@ -17,7 +17,7 @@ async def generate_reply(
     retries = max(0, settings.model.retries)
     max_tokens = (
         settings.model.max_tokens_group
-        if ctx.variant == "group_compact"
+        if ctx.chat_type == "group" or ctx.variant.startswith("group")
         else settings.model.max_tokens_private
     )
     preview_chars = settings.trace.preview_chars

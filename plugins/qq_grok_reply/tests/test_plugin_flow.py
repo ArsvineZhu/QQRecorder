@@ -4,10 +4,11 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from plugins.qq_grok_reply.config import build_config
-from plugins.qq_grok_reply.context_builder import BuiltContext
+from plugins.qq_grok_reply.context_builder import BuiltContext, TopicContextError
 from plugins.qq_grok_reply.model_client import ReplyModelError
 from plugins.qq_grok_reply.plugin import QQGrokReplyPlugin
 from plugins.qq_grok_reply.sender import SendOutcome
+from plugins.qq_grok_reply.topic_analyzer import TopicAnalysis
 
 
 class _FakeReply:
@@ -337,3 +338,56 @@ def test_plugin_handle_group_prefix_timeout_sends_fallback(tmp_path: Path, monke
     assert qq_api.group_calls
     assert trace_store.finished[0][1]["decision"] == "error"
     assert trace_store.finished[0][1]["error_code"] == "llm_timeout"
+
+
+def test_plugin_handle_topic_context_error_records_trace_without_reply(
+    tmp_path: Path, monkeypatch
+):
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "monitor_all": False,
+            "targets": {"groups": ["30001"]},
+            "cooldown": {"group_chat_sec": 0, "group_user_sec": 0},
+            "topic_analyzer": {"fallback_to_recent": False},
+        }
+    )
+    source_msg = SimpleNamespace(
+        id=11,
+        message_id="evt-1",
+        chat_type="group",
+        group_id="30001",
+        user_id="20001",
+        replies=[],
+    )
+    plugin = _make_plugin(
+        settings, tmp_path, _FakeBridge(source_msg), _FakeTraceStore()
+    )
+    event = _FakeEvent(chat_type="group", raw_message="/ask 你好", group_id="30001")
+
+    def _raise_topic_error(*_args, **_kwargs):
+        raise TopicContextError(
+            TopicAnalysis(
+                topic_title="",
+                topic_summary="",
+                selected_message_ids=["evt-1"],
+                candidate_count=3,
+                confidence=0.1,
+                error_code="topic_low_confidence",
+            )
+        )
+
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.plugin.build_context", _raise_topic_error
+    )
+
+    asyncio.run(plugin._handle(event, "group"))
+
+    qq_api = cast(_FakeQQAPI, plugin.api.qq)
+    trace_store = cast(_FakeTraceStore, plugin._trace_store)
+    assert qq_api.group_calls == []
+    assert trace_store.finished == []
+    assert trace_store.inserted[0]["decision"] == "error"
+    assert trace_store.inserted[0]["topic_error_code"] == "topic_low_confidence"
+    assert trace_store.inserted[0]["topic_fallback_used"] is False
