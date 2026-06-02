@@ -113,13 +113,30 @@ async def analyze_topic(
 
 
 def _extract_content(response) -> str:
-    choices = getattr(response, "choices", None) or []
-    if choices:
-        message = getattr(choices[0], "message", None) or {}
-        return str(getattr(message, "content", "") or "")
-    if hasattr(response, "content"):
-        return str(response.content) or ""
+    content = _get_nested(response, "choices", 0, "message", "content")
+    if content:
+        return str(content)
+    content = _get_nested(response, "content")
+    if content:
+        return str(content)
     return ""
+
+
+def _get_nested(value: Any, *path: Any) -> Any:
+    current = value
+    for key in path:
+        if isinstance(key, int):
+            if not isinstance(current, list) or key >= len(current):
+                return None
+            current = current[key]
+            continue
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            current = getattr(current, key, None)
+        if current is None:
+            return None
+    return current
 
 
 def validate_topic_analysis(
