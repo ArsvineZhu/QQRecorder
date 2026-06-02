@@ -1,123 +1,22 @@
-from dataclasses import dataclass, field
+from .config_schema import (
+    RECORDER_COMMAND_PREFIXES as _RECORDER_COMMAND_PREFIXES,
+)
+from .config_schema import (
+    ContextConfig,
+    CooldownConfig,
+    LockRetryConfig,
+    ModelConfig,
+    ReadAfterWriteConfig,
+    ReplyPluginSettings,
+    SendConfig,
+    TargetConfig,
+    TopicAnalyzerConfig,
+    TraceConfig,
+    TriggerConfig,
+)
+from .config_validation import validate_config
 
-RECORDER_COMMAND_PREFIXES = ("recorder", "/recorder", "r", "/r")
-
-
-@dataclass
-class TargetConfig:
-    groups: list[str] = field(default_factory=list)
-    private: list[str] = field(default_factory=list)
-
-
-@dataclass
-class TriggerConfig:
-    private_enabled: bool = True
-    group_enabled: bool = True
-    prefixes: list[str] = field(default_factory=lambda: ["/ask", "/ai", "grok"])
-    allow_at: bool = True
-    allow_reply_to_bot: bool = False
-    ignore_self: bool = True
-    ignore_recorder_command: bool = True
-
-
-@dataclass
-class ReadAfterWriteConfig:
-    timeout_ms: int = 2000
-    backoff_ms: list[int] = field(default_factory=lambda: [50, 100, 200, 400, 800])
-
-
-@dataclass
-class ContextConfig:
-    mode: str = "topic_ai"
-    recent_limit_group: int = 6
-    recent_limit_private: int = 10
-    quote_chars_group: int = 320
-    quote_chars_private: int = 480
-    total_chars_group: int = 6000
-    total_chars_private: int = 2200
-    recent_chars_group: int = 120
-    recent_chars_private: int = 180
-    candidate_limit_group: int = 80
-    candidate_limit_private: int = 30
-    candidate_time_window_minutes_group: int = 45
-    candidate_time_window_minutes_private: int = 30
-    selected_max_messages_group: int = 20
-    selected_max_messages_private: int = 12
-    forward_max_items: int = 12
-    forward_max_chars: int = 1600
-    fallback_recent_limit_group: int = 16
-    fallback_recent_limit_private: int = 12
-
-
-@dataclass
-class TopicAnalyzerConfig:
-    enabled: bool = True
-    model: str = ""
-    temperature: float = 0.2
-    timeout_sec: int = 8
-    min_confidence: float = 0.45
-    fallback_to_recent: bool = True
-    max_summary_chars: int = 800
-
-
-@dataclass
-class CooldownConfig:
-    group_chat_sec: float = 2.0
-    group_user_sec: float = 5.0
-    private_user_sec: float = 1.0
-
-
-@dataclass
-class ModelConfig:
-    provider: str = "ncatbot_ai"
-    model: str = ""
-    temperature: float = 0.7
-    max_tokens_group: int = 220
-    max_tokens_private: int = 420
-    timeout_sec: int = 12
-    retries: int = 1
-    llm_concurrency: int = 2
-
-
-@dataclass
-class SendConfig:
-    group_use_reply_segment: bool = True
-    group_at_sender: bool = False
-    group_max_chars_per_part: int = 250
-    private_max_chars_per_part: int = 500
-    group_max_parts: int = 2
-    private_max_parts: int = 3
-    retry_once: bool = True
-
-
-@dataclass
-class TraceConfig:
-    enabled: bool = True
-    preview_chars: int = 240
-
-
-@dataclass
-class LockRetryConfig:
-    enabled: bool = True
-    max_retries: int = 5
-    base_delay_ms: int = 50
-
-
-@dataclass
-class ReplyPluginSettings:
-    enabled: bool = False
-    recorder_db: str = ""
-    monitor_all: bool = False
-    targets: TargetConfig = field(default_factory=TargetConfig)
-    trigger: TriggerConfig = field(default_factory=TriggerConfig)
-    read_after_write: ReadAfterWriteConfig = field(default_factory=ReadAfterWriteConfig)
-    context: ContextConfig = field(default_factory=ContextConfig)
-    topic_analyzer: TopicAnalyzerConfig = field(default_factory=TopicAnalyzerConfig)
-    cooldown: CooldownConfig = field(default_factory=CooldownConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
-    send: SendConfig = field(default_factory=SendConfig)
-    trace: TraceConfig = field(default_factory=TraceConfig)
-    lock_retry: LockRetryConfig = field(default_factory=LockRetryConfig)
+RECORDER_COMMAND_PREFIXES = _RECORDER_COMMAND_PREFIXES
 
 
 def build_config(raw: dict) -> ReplyPluginSettings:
@@ -222,6 +121,8 @@ def build_config(raw: dict) -> ReplyPluginSettings:
         trace=TraceConfig(
             enabled=trace_data.get("enabled", True),
             preview_chars=trace_data.get("preview_chars", 240),
+            log_runtime=trace_data.get("log_runtime", True),
+            log_chars=trace_data.get("log_chars", 4000),
         ),
         lock_retry=LockRetryConfig(
             enabled=lock_retry_data.get("enabled", True),
@@ -229,92 +130,8 @@ def build_config(raw: dict) -> ReplyPluginSettings:
             base_delay_ms=lock_retry_data.get("base_delay_ms", 50),
         ),
     )
-    _validate_config(settings)
+    validate_config(settings)
     return settings
-
-
-def _validate_config(settings: ReplyPluginSettings) -> None:
-    _validate_required_fields(settings)
-    _validate_runtime_limits(settings)
-    _validate_targets(settings)
-
-
-def _validate_required_fields(settings: ReplyPluginSettings) -> None:
-    if settings.enabled and not settings.recorder_db.strip():
-        raise ValueError("recorder_db must be configured when qq_grok_reply is enabled")
-    if settings.read_after_write.timeout_ms <= 0:
-        raise ValueError("read_after_write.timeout_ms must be > 0")
-    if not settings.read_after_write.backoff_ms:
-        raise ValueError("read_after_write.backoff_ms must not be empty")
-    if any(delay <= 0 for delay in settings.read_after_write.backoff_ms):
-        raise ValueError(
-            "read_after_write.backoff_ms must contain only positive values"
-        )
-
-
-def _validate_runtime_limits(settings: ReplyPluginSettings) -> None:
-    if settings.context.mode not in {"topic_ai", "recent"}:
-        raise ValueError("context.mode must be 'topic_ai' or 'recent'")
-    if (
-        settings.context.recent_limit_group <= 0
-        or settings.context.recent_limit_private <= 0
-    ):
-        raise ValueError("context recent limits must be > 0")
-    if (
-        settings.context.quote_chars_group <= 0
-        or settings.context.quote_chars_private <= 0
-    ):
-        raise ValueError("context quote limits must be > 0")
-    if (
-        settings.context.total_chars_group <= 0
-        or settings.context.total_chars_private <= 0
-    ):
-        raise ValueError("context total limits must be > 0")
-    _validate_topic_limits(settings)
-    if settings.model.timeout_sec <= 0:
-        raise ValueError("model.timeout_sec must be > 0")
-    if settings.model.llm_concurrency <= 0:
-        raise ValueError("model.llm_concurrency must be > 0")
-    if (
-        settings.send.group_max_chars_per_part <= 0
-        or settings.send.private_max_chars_per_part <= 0
-    ):
-        raise ValueError("send max chars must be > 0")
-    if settings.send.group_max_parts <= 0 or settings.send.private_max_parts <= 0:
-        raise ValueError("send max parts must be > 0")
-    if settings.lock_retry.max_retries < 0 or settings.lock_retry.base_delay_ms <= 0:
-        raise ValueError("lock_retry values are invalid")
-
-
-def _validate_topic_limits(settings: ReplyPluginSettings) -> None:
-    context_numbers = (
-        settings.context.candidate_limit_group,
-        settings.context.candidate_limit_private,
-        settings.context.candidate_time_window_minutes_group,
-        settings.context.candidate_time_window_minutes_private,
-        settings.context.selected_max_messages_group,
-        settings.context.selected_max_messages_private,
-        settings.context.forward_max_items,
-        settings.context.forward_max_chars,
-        settings.context.fallback_recent_limit_group,
-        settings.context.fallback_recent_limit_private,
-        settings.topic_analyzer.max_summary_chars,
-    )
-    if any(value <= 0 for value in context_numbers):
-        raise ValueError("topic context limits must be > 0")
-    if not 0 <= settings.topic_analyzer.min_confidence <= 1:
-        raise ValueError("topic_analyzer.min_confidence must be between 0 and 1")
-    if settings.topic_analyzer.timeout_sec <= 0:
-        raise ValueError("topic_analyzer.timeout_sec must be > 0")
-
-
-def _validate_targets(settings: ReplyPluginSettings) -> None:
-    if not settings.enabled or settings.monitor_all:
-        return
-
-    for item in settings.targets.groups + settings.targets.private:
-        if item and not str(item).isdigit():
-            raise ValueError("target identifiers must contain only digits")
 
 
 def is_chat_targeted(

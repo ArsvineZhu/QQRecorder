@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -125,7 +126,8 @@ def test_plugin_handle_disabled_is_noop(tmp_path: Path):
     assert qq_api.private_calls == []
 
 
-def test_plugin_handle_success_updates_trace(tmp_path: Path, monkeypatch):
+def test_plugin_handle_success_updates_trace(tmp_path: Path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="qq_grok_reply")
     settings = build_config(
         {
             "enabled": True,
@@ -179,6 +181,8 @@ def test_plugin_handle_success_updates_trace(tmp_path: Path, monkeypatch):
     assert trace_store.inserted[0]["source_message_id"] == "evt-1"
     assert trace_store.finished[0][1]["decision"] == "replied"
     assert trace_store.finished[0][1]["sent_message_id"] == "bot-1"
+    assert any('"current_block": "你好"' in entry for entry in caplog.messages)
+    assert any('"response_text": "收到"' in entry for entry in caplog.messages)
 
 
 def test_plugin_handle_reply_to_bot_reaches_final_decision(tmp_path: Path, monkeypatch):

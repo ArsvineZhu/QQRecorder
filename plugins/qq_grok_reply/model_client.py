@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 from .context_builder import BuiltContext
 from .prompt import build_prompt_messages
@@ -12,7 +13,7 @@ class ReplyModelError(RuntimeError):
 
 async def generate_reply(
     api, ctx: BuiltContext, settings
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, dict[str, Any]]:
     messages = build_prompt_messages(ctx)
     retries = max(0, settings.model.retries)
     max_tokens = (
@@ -48,6 +49,8 @@ async def generate_reply(
                             messages[-1]["content"], preview_chars
                         ),
                         "model_response_summary": _summarize(text, preview_chars),
+                        "request_messages": messages,
+                        "response_text": text,
                     }
                 except ReplyModelError:
                     raise
