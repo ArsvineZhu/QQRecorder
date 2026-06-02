@@ -41,14 +41,18 @@ class RecorderBridge:
             return message
 
         deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000)
-        for delay in backoff_ms:
+        backoffs = backoff_ms or [50]
+        attempt = 0
+        while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 break
+            delay = backoffs[min(attempt, len(backoffs) - 1)]
             await asyncio.sleep(min(delay / 1000, remaining))
             message = await self.get_message(source_message_id)
             if message is not None:
                 return message
+            attempt += 1
         return await self.get_message(source_message_id)
 
     async def get_message(self, source_message_id: str) -> Message | None:

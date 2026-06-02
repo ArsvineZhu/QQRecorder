@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -53,6 +54,10 @@ def test_generate_reply_returns_text_and_metadata():
     assert meta["model_name"] == "demo"
     assert "当前消息" in meta["model_request_summary"]
     assert meta["model_response_summary"] == "你好，世界"
+    request_messages = cast(list[dict[str, str]], meta["request_messages"])
+    assert request_messages[0]["role"] == "system"
+    assert request_messages[1]["content"]
+    assert meta["response_text"] == "你好，世界"
 
 
 def test_generate_reply_raises_timeout_error():

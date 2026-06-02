@@ -54,3 +54,31 @@ def test_recorder_bridge_waits_for_visible_row_and_gets_recent(tmp_path: Path):
         await writer.close()
 
     asyncio.run(_run())
+
+
+def test_recorder_bridge_waits_until_timeout_not_just_backoff_sum(tmp_path: Path):
+    async def _run() -> None:
+        db_path = tmp_path / "recorder.db"
+        writer = MessageStorage(str(db_path))
+        await writer.init_db()
+
+        bridge = RecorderBridge()
+        await bridge.connect_existing(str(db_path))
+
+        async def _save_later():
+            await asyncio.sleep(0.16)
+            await writer.save_message(_message_data("m-slow"))
+
+        task = asyncio.create_task(_save_later())
+        message = await bridge.wait_until_visible(
+            "m-slow", timeout_ms=250, backoff_ms=[20, 40, 60]
+        )
+        await task
+
+        assert message is not None
+        assert message.message_id == "m-slow"
+
+        await bridge.close()
+        await writer.close()
+
+    asyncio.run(_run())

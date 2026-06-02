@@ -1,1 +1,1 @@
-"""Development helper tools for QQRecorder."""
+"""Development helper tools for QQContextBot."""

@@ -1,14 +1,14 @@
 [project]
-name = "qqrecorder"
+name = "qqcontextbot"
 version = "1.5.1"
-description = "静默 QQ 消息记录器 —— 基于 NcatBot 的 QQ 消息自动记录插件"
+description = "QQContextBot - 基于 NcatBot 的 QQ 上下文记录与回复项目"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [
     { name = "Arsvine Zhu" },
 ]
-keywords = ["qq", "recorder", "ncatbot", "bot", "message"]
+keywords = ["qq", "context", "ncatbot", "bot", "message"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

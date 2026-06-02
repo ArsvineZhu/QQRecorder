@@ -1,6 +1,5 @@
 import hashlib
-import inspect
-import json
+import logging
 import os
 import time
 from typing import Any, cast
@@ -18,6 +17,13 @@ from .config import (
 )
 from .context_builder import TopicContextError, build_context
 from .model_client import ReplyModelError, generate_reply
+from .plugin_utils import (
+    chat_identity,
+    json_list,
+    json_payload,
+    resolve_awaitable,
+    sender_name,
+)
 from .recorder_bridge import RecorderBridge
 from .sender import SendOutcome, send_reply
 from .trace_store import TraceStore
@@ -28,7 +34,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
     name = "qq_grok_reply"
     version = "0.1.0"
     author = "Arsvine Zhu"
-    description = "基于 QQRecorder 的受控 AI 回复插件"
+    description = "基于 QQContextBot 的受控 AI 回复插件"
 
     def __init__(self):
         super().__init__()
@@ -44,6 +50,8 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             return
         if not os.path.isabs(self.settings.recorder_db):
             raise ValueError("qq_grok_reply.recorder_db must be an absolute path")
+
+        logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
         self._bridge = RecorderBridge()
         await self._bridge.connect_existing(self.settings.recorder_db)
@@ -69,6 +77,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
         await self._handle(event, "private")
 
     async def _handle(self, event, _chat_type: str) -> None:
+        event_message_id = str(getattr(event, "message_id", "") or "")
         prefilter_reason = prefilter_event(event, self.settings)
         if prefilter_reason is None and not self._may_be_reply_to_bot(event):
             return
@@ -83,7 +92,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
         )
         bot_reply_message_ids = (
             await trace_store.get_sent_message_ids(
-                *_chat_identity(event, source_msg),
+                *chat_identity(event, source_msg),
             )
             if prefilter_reason is None and self.settings.trigger.allow_reply_to_bot
             else set()
@@ -101,6 +110,22 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             "group_compact"
             if getattr(event, "group_id", None) is not None
             else "private_contextual"
+        )
+        self._log_runtime(
+            "decision",
+            message_id=event_message_id,
+            chat_type="group"
+            if getattr(event, "group_id", None) is not None
+            else "private",
+            chat_id=str(
+                getattr(event, "group_id", None) or getattr(event, "user_id", "") or ""
+            ),
+            user_id=str(getattr(event, "user_id", "") or ""),
+            source_visible=source_msg is not None,
+            source_message_db_id=getattr(source_msg, "id", None),
+            allowed=allowed,
+            prefilter_reason=prefilter_reason or "",
+            decision_reason=decision_reason,
         )
         if not allowed:
             if self.settings.trace.enabled:
@@ -127,18 +152,29 @@ class QQGrokReplyPlugin(NcatBotPlugin):
 
         assert source_msg is not None
         try:
-            ctx = await _resolve_awaitable(
+            ctx = await resolve_awaitable(
                 build_context(
                     source_msg,
                     bridge,
                     self.settings,
                     event=event,
                     trigger_reason=decision_reason,
-                    sender_name=_sender_name(event),
+                    sender_name=sender_name(event),
                     analyzer_api=self.api,
+                    runtime_api=self.api,
                 )
             )
         except TopicContextError as exc:
+            self._log_runtime(
+                "topic_context_error",
+                message_id=event_message_id,
+                trigger_reason=decision_reason,
+                error_code=exc.analysis.error_code,
+                topic_title=exc.analysis.topic_title,
+                topic_summary=exc.analysis.topic_summary,
+                topic_confidence=exc.analysis.confidence,
+                selected_ids=exc.analysis.selected_message_ids,
+            )
             if self.settings.trace.enabled:
                 analysis = exc.analysis
                 await trace_store.insert_trace(
@@ -158,14 +194,14 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                     else "private_contextual",
                     topic_title=analysis.topic_title,
                     topic_summary=analysis.topic_summary,
-                    topic_participants_json=_json_list(
+                    topic_participants_json=json_list(
                         [
                             f"{item.name}（{item.role}）" if item.role else item.name
                             for item in analysis.participants
                             if item.name
                         ]
                     ),
-                    topic_selected_ids_json=_json_list(analysis.selected_message_ids),
+                    topic_selected_ids_json=json_list(analysis.selected_message_ids),
                     topic_candidate_count=analysis.candidate_count,
                     topic_confidence=analysis.confidence,
                     topic_error_code=analysis.error_code,
@@ -173,6 +209,22 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                 )
             return
 
+        self._log_runtime(
+            "context",
+            message_id=event_message_id,
+            trigger_reason=decision_reason,
+            variant=ctx.variant,
+            context_ids=ctx.context_ids,
+            current_time=ctx.current_time,
+            sender_name=ctx.sender_name,
+            topic_title=ctx.topic_title,
+            topic_summary=ctx.topic_summary,
+            topic_confidence=ctx.topic_confidence,
+            topic_candidate_count=ctx.topic_candidate_count,
+            topic_error_code=ctx.topic_error_code,
+            topic_fallback_used=ctx.topic_fallback_used,
+            **self._context_log_payload(ctx),
+        )
         trace_id = None
         if self.settings.trace.enabled:
             trace_id = await trace_store.insert_trace(
@@ -190,8 +242,8 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                 prompt_variant=ctx.variant,
                 topic_title=ctx.topic_title,
                 topic_summary=ctx.topic_summary,
-                topic_participants_json=_json_list(ctx.topic_participants),
-                topic_selected_ids_json=_json_list(ctx.context_ids),
+                topic_participants_json=json_list(ctx.topic_participants),
+                topic_selected_ids_json=json_list(ctx.context_ids),
                 topic_candidate_count=ctx.topic_candidate_count,
                 topic_confidence=ctx.topic_confidence,
                 topic_error_code=ctx.topic_error_code,
@@ -199,11 +251,21 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             )
 
         try:
-            reply_text, meta = await _resolve_awaitable(
+            reply_text, meta = await resolve_awaitable(
                 generate_reply(self.api, ctx, self.settings)
             )
         except ReplyModelError as exc:
             fallback = await self._send_failure_fallback(event, decision_reason)
+            self._log_runtime(
+                "llm_error",
+                message_id=event_message_id,
+                trigger_reason=decision_reason,
+                error_code=exc.code,
+                fallback_sent=fallback.sent,
+                fallback_message_id=fallback.sent_message_id,
+                fallback_parts=fallback.sent_parts,
+                fallback_error_code=fallback.error_code,
+            )
             if trace_id is not None:
                 await trace_store.finish_trace(
                     trace_id,
@@ -219,8 +281,25 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                 )
             return
 
-        outcome = await _resolve_awaitable(
+        self._log_runtime(
+            "llm_response",
+            message_id=event_message_id,
+            trigger_reason=decision_reason,
+            model_name=meta["model_name"],
+            response_text=meta.get("response_text", reply_text),
+            request_summary=meta["model_request_summary"],
+            response_summary=meta["model_response_summary"],
+        )
+        outcome = await resolve_awaitable(
             send_reply(self.api, event, reply_text, self.settings)
+        )
+        self._log_runtime(
+            "send_result",
+            message_id=event_message_id,
+            sent=outcome.sent,
+            sent_message_id=outcome.sent_message_id,
+            sent_parts=outcome.sent_parts,
+            error_code=outcome.error_code,
         )
         if trace_id is not None:
             await trace_store.finish_trace(
@@ -306,35 +385,25 @@ class QQGrokReplyPlugin(NcatBotPlugin):
         key = f"{getattr(event, 'message_id', '')}:{getattr(event, 'time', '')}"
         return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
 
-
-async def _resolve_awaitable(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
-
-
-def _sender_name(event) -> str:
-    for field in ("card", "nickname", "sender_nickname", "user_name"):
-        value = getattr(event, field, None)
-        if value:
-            return str(value)
-    return str(getattr(event, "user_id", "") or "")
-
-
-def _chat_identity(event, source_msg) -> tuple[str, str]:
-    chat_type = str(getattr(source_msg, "chat_type", "") or "")
-    if not chat_type:
-        chat_type = (
-            "group" if getattr(event, "group_id", None) is not None else "private"
+    def _log_runtime(self, stage: str, **payload) -> None:
+        if not self.settings.trace.log_runtime:
+            return
+        self.logger.info(
+            "qq_grok_reply %s | %s",
+            stage,
+            json_payload(payload, self.settings.trace.log_chars),
         )
-    chat_id = str(
-        getattr(source_msg, "group_id", None)
-        or getattr(event, "group_id", None)
-        or getattr(source_msg, "user_id", "")
-        or getattr(event, "user_id", "")
-    )
-    return chat_type, chat_id
 
-
-def _json_list(items: list[str]) -> str:
-    return json.dumps(items, ensure_ascii=False)
+    def _context_log_payload(self, ctx) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "current_block_chars": len(ctx.current_block),
+            "quoted_block_chars": len(ctx.quoted_block),
+            "recent_block_chars": len(ctx.recent_block),
+        }
+        if self.settings.trace.log_context_blocks:
+            payload.update(
+                current_block=ctx.current_block,
+                quoted_block=ctx.quoted_block,
+                recent_block=ctx.recent_block,
+            )
+        return payload

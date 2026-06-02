@@ -1,4 +1,4 @@
-"""QQRecorder backup inspection and restore tool.
+"""QQContextBot backup inspection and restore tool.
 
 Usage:
     python scripts/backup_tool.py list --dir data/qq_recorder/data/backups
@@ -110,7 +110,7 @@ def _load_manifest(archive_path: Path) -> dict:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="QQRecorder backup tool")
+    parser = argparse.ArgumentParser(description="QQContextBot backup tool")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     list_parser = subparsers.add_parser("list", help="List backup archives")

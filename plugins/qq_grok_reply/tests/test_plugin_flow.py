@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -125,7 +126,8 @@ def test_plugin_handle_disabled_is_noop(tmp_path: Path):
     assert qq_api.private_calls == []
 
 
-def test_plugin_handle_success_updates_trace(tmp_path: Path, monkeypatch):
+def test_plugin_handle_success_updates_trace(tmp_path: Path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="qq_grok_reply")
     settings = build_config(
         {
             "enabled": True,
@@ -179,6 +181,68 @@ def test_plugin_handle_success_updates_trace(tmp_path: Path, monkeypatch):
     assert trace_store.inserted[0]["source_message_id"] == "evt-1"
     assert trace_store.finished[0][1]["decision"] == "replied"
     assert trace_store.finished[0][1]["sent_message_id"] == "bot-1"
+    assert any('"current_block_chars": 2' in entry for entry in caplog.messages)
+    assert not any('"current_block": "你好"' in entry for entry in caplog.messages)
+    assert any('"response_text": "收到"' in entry for entry in caplog.messages)
+
+
+def test_plugin_handle_success_logs_full_context_only_when_enabled(
+    tmp_path: Path, monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO, logger="qq_grok_reply")
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "monitor_all": False,
+            "targets": {"private": ["20001"]},
+            "trace": {"log_context_blocks": True},
+        }
+    )
+    source_msg = SimpleNamespace(
+        id=11,
+        message_id="evt-1",
+        chat_type="private",
+        group_id=None,
+        user_id="20001",
+        replies=[],
+    )
+    plugin = _make_plugin(
+        settings, tmp_path, _FakeBridge(source_msg), _FakeTraceStore()
+    )
+    event = _FakeEvent(chat_type="private", raw_message="你好")
+
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.plugin.build_context",
+        lambda *_args, **_kwargs: BuiltContext(
+            context_ids=["evt-1"],
+            quoted_block="引用",
+            recent_block="最近",
+            current_block="你好",
+            variant="private_contextual",
+        ),
+    )
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.plugin.generate_reply",
+        lambda *_args, **_kwargs: (
+            "收到",
+            {
+                "model_name": "demo",
+                "model_request_summary": "req",
+                "model_response_summary": "resp",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.plugin.send_reply",
+        lambda *_args, **_kwargs: SendOutcome(True, "bot-1", 1, None),
+    )
+
+    asyncio.run(plugin._handle(event, "private"))
+
+    assert any('"current_block": "你好"' in entry for entry in caplog.messages)
+    assert any('"quoted_block": "引用"' in entry for entry in caplog.messages)
+    assert any('"recent_block": "最近"' in entry for entry in caplog.messages)
 
 
 def test_plugin_handle_reply_to_bot_reaches_final_decision(tmp_path: Path, monkeypatch):

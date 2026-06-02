@@ -24,8 +24,8 @@ class _BridgeStub:
 
 
 class _FakeAIAPI:
-    def __init__(self, tool_arguments: str):
-        self.tool_arguments = tool_arguments
+    def __init__(self, content: str):
+        self.content = content
         self.calls = []
 
     async def chat(self, messages, **kwargs):
@@ -34,18 +34,42 @@ class _FakeAIAPI:
             choices=[
                 SimpleNamespace(
                     message=SimpleNamespace(
-                        tool_calls=[
-                            SimpleNamespace(
-                                function=SimpleNamespace(
-                                    name="submit_topic_analysis",
-                                    arguments=self.tool_arguments,
-                                )
-                            )
-                        ]
+                        content=self.content,
                     )
                 )
             ]
         )
+
+
+class _FakeRuntimeAPI:
+    class qq:
+        class query:
+            @staticmethod
+            async def get_forward_msg(_forward_id: str):
+                return {
+                    "messages": [
+                        {
+                            "type": "node",
+                            "data": {
+                                "user_id": "30001",
+                                "nickname": "甲",
+                                "content": [
+                                    {"type": "text", "data": {"text": "第一条转发内容"}}
+                                ],
+                            },
+                        },
+                        {
+                            "type": "node",
+                            "data": {
+                                "user_id": "30002",
+                                "nickname": "乙",
+                                "content": [
+                                    {"type": "text", "data": {"text": "第二条转发内容"}}
+                                ],
+                            },
+                        },
+                    ]
+                }
 
 
 def _message(
@@ -135,7 +159,109 @@ def test_build_context_unescapes_text_and_collects_context_ids():
     assert "[12:30] 小明: 引用\n内容" in built.quoted_block
     assert "[12:30] 图图: [图片]" in built.recent_block
     assert "[12:30] 转发者: [合并转发]" in built.recent_block
-    assert built.max_reply_chars == 500
+
+
+def test_build_context_quote_forward_prefers_forward_summary_over_cq_code():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "context": {
+                "quote_chars_group": 300,
+                "forward_max_items": 2,
+                "forward_max_chars": 160,
+            },
+        }
+    )
+    source = _message(
+        "m-current",
+        raw_message="评价一下",
+        reply_to="m-forward-quote",
+        sender_card="Arsvine",
+    )
+    quote = _message(
+        "m-forward-quote",
+        raw_message="[CQ:forward,id=123456,content=foo]",
+        has_forward=True,
+        sender_nickname="转发者",
+        forward_messages=[
+            SimpleNamespace(id=1, depth=0, nickname="A", content_summary="第一条观点"),
+            SimpleNamespace(id=2, depth=0, nickname="B", content_summary="第二条观点"),
+        ],
+    )
+
+    built = asyncio.run(build_context(source, _BridgeStub(quote, [source]), settings))
+
+    assert "[CQ:forward" not in built.quoted_block
+    assert "[12:30] 转发者: [合并转发]" in built.quoted_block
+    assert "合并转发摘要" in built.quoted_block
+    assert "A：第一条观点" in built.quoted_block
+
+
+def test_build_context_quote_legacy_forward_cq_renders_forward_placeholder():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+        }
+    )
+    source = _message(
+        "m-current",
+        raw_message="能看到吗",
+        chat_type="private",
+        group_id=None,
+        reply_to="m-legacy-forward",
+    )
+    quote = _message(
+        "m-legacy-forward",
+        raw_message="[CQ:forward,id=123456,content=foo]",
+        chat_type="private",
+        group_id=None,
+        has_forward=False,
+        sender_nickname="Zodiac",
+    )
+
+    built = asyncio.run(build_context(source, _BridgeStub(quote, [source]), settings))
+
+    assert built.quoted_block == "[12:30] Zodiac: [合并转发]"
+
+
+def test_legacy_forward_quote_fetches_summary_when_api_available():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "context": {"forward_max_items": 2, "forward_max_chars": 200},
+        }
+    )
+    source = _message(
+        "m-current",
+        raw_message="这个你怎么看",
+        chat_type="private",
+        group_id=None,
+        reply_to="m-legacy-forward",
+    )
+    quote = _message(
+        "m-legacy-forward",
+        raw_message="[CQ:forward,id=123456,content=foo]",
+        chat_type="private",
+        group_id=None,
+        has_forward=False,
+        sender_nickname="Zodiac",
+    )
+
+    built = asyncio.run(
+        build_context(
+            source,
+            _BridgeStub(quote, [source]),
+            settings,
+            runtime_api=_FakeRuntimeAPI(),
+        )
+    )
+
+    assert "[12:30] Zodiac: [合并转发]" in built.quoted_block
+    assert "合并转发摘要" in built.quoted_block
+    assert "甲：第一条转发内容" in built.quoted_block
 
 
 def test_build_context_respects_private_budget_and_recent_limit():
@@ -309,10 +435,8 @@ def test_build_context_topic_ai_selects_related_messages_and_forward_summary():
         )
     )
 
-    assert "tools" in api.ai.calls[0][1]
-    assert (
-        api.ai.calls[0][1]["tool_choice"]["function"]["name"] == "submit_topic_analysis"
-    )
+    assert "response_format" in api.ai.calls[0][1]
+    assert api.ai.calls[0][1]["response_format"] == {"type": "json_object"}
     assert built.variant == "group_topic_ai"
     assert built.topic_title == "硬盘选择"
     assert built.topic_confidence == 0.82

@@ -275,3 +275,44 @@ def test_message_processor_persists_sender_display_fields(tmp_path: Path):
     assert stored is not None
     assert stored.sender_nickname == "tester"
     assert stored.sender_card == "群名片"
+
+
+def test_message_processor_detects_forward_from_raw_message_when_segment_missing(
+    tmp_path: Path,
+):
+    async def _run():
+        db_path = tmp_path / "recorder.db"
+        settings = build_config(
+            {
+                "monitor_all": True,
+                "image": {"download": False},
+                "forward": {"parse_content": False},
+                "backup": {"enabled": False},
+                "storage": {"database": str(db_path)},
+            }
+        )
+        storage = MessageStorage(str(db_path))
+        await storage.init_db()
+        processor = MessageProcessor(storage, settings, _DummyAPI(), _DummyLogger())
+
+        message_id = await processor.process_message(
+            {
+                "message_type": "private",
+                "message_id": "m-forward",
+                "user_id": "u1",
+                "time": 1_712_345_678,
+                "raw_message": "[CQ:forward,id=7646754710926849502,content=foo]",
+                "message": [],
+                "sender": {"nickname": "tester", "card": ""},
+            }
+        )
+        stored = await storage.get_message("m-forward")
+        await storage.close()
+        return message_id, stored
+
+    message_id, stored = asyncio.run(_run())
+    assert message_id is not None
+    assert stored is not None
+    assert stored.has_forward is True
+    assert len(stored.forward_messages) == 1
+    assert stored.forward_messages[0].forward_id == "7646754710926849502"

@@ -1,5 +1,6 @@
 import html
 import json
+import re
 from dataclasses import dataclass
 
 from .sticker_detector import combined_detection
@@ -110,14 +111,22 @@ def extract_at_mentions(segments: list[dict]) -> list[AtInfo]:
     return ats
 
 
-def extract_forward_ids(segments: list[dict]) -> list[str]:
+_FORWARD_ID_RE = re.compile(r"\[CQ:forward,[^\]]*?\bid=([^,\]]+)")
+
+
+def extract_forward_ids(segments: list[dict], raw_message: str = "") -> list[str]:
     forward_ids = []
     for seg in segments:
         if seg["type"] == "forward":
             forward_id = seg["data"].get("id", "").strip()
             if forward_id:
                 forward_ids.append(forward_id)
-    return forward_ids
+    if not forward_ids and raw_message:
+        for match in _FORWARD_ID_RE.finditer(raw_message):
+            forward_id = match.group(1).strip()
+            if forward_id:
+                forward_ids.append(forward_id)
+    return list(dict.fromkeys(forward_ids))
 
 
 def extract_app_shares(segments: list[dict]) -> list[AppShareInfo]:
@@ -225,7 +234,7 @@ def parse_message(message_segments: list[dict], raw_message: str = "") -> Parsed
     images = extract_images(message_segments, raw_message)
     replies = extract_replies(message_segments)
     at_mentions = extract_at_mentions(message_segments)
-    forward_ids = extract_forward_ids(message_segments)
+    forward_ids = extract_forward_ids(message_segments, raw_message)
     app_shares = extract_app_shares(message_segments)
     segments = build_segments_data(message_segments)
 

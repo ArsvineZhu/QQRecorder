@@ -1,5 +1,5 @@
 """
-QQRecorder database export & inspection tool.
+QQContextBot database export & inspection tool.
 
 Usage:
     python scripts/export_db.py summary  # Overview: row counts, date range
@@ -718,7 +718,7 @@ COMMANDS["help"] = cmd_help
 
 def main():
     parser = argparse.ArgumentParser(
-        description="QQRecorder database export & inspection tool",
+        description="QQContextBot database export & inspection tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
