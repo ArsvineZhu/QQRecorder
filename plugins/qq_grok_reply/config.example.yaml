@@ -1,0 +1,63 @@
+enabled: false
+recorder_db: "D:/absolute/path/to/recorder.db"
+monitor_all: false
+
+targets:
+  groups: ["group_id_here"]
+  private: ["qq_id_here"]
+
+trigger:
+  private_enabled: true
+  group_enabled: true
+  prefixes: ["/ask", "/ai", "grok"]
+  allow_at: true
+  allow_reply_to_bot: false
+  ignore_self: true
+  ignore_recorder_command: true
+
+read_after_write:
+  timeout_ms: 2000
+  backoff_ms: [50, 100, 200, 400, 800]
+
+context:
+  recent_limit_group: 6
+  recent_limit_private: 10
+  quote_chars_group: 320
+  quote_chars_private: 480
+  total_chars_group: 1200
+  total_chars_private: 2200
+  recent_chars_group: 120
+  recent_chars_private: 180
+
+cooldown:
+  group_chat_sec: 2.0
+  group_user_sec: 5.0
+  private_user_sec: 1.0
+
+model:
+  provider: ncatbot_ai
+  model: ""
+  temperature: 0.7
+  max_tokens_group: 220
+  max_tokens_private: 420
+  timeout_sec: 12
+  retries: 1
+  llm_concurrency: 2
+
+send:
+  group_use_reply_segment: true
+  group_at_sender: false
+  group_max_chars_per_part: 250
+  private_max_chars_per_part: 500
+  group_max_parts: 2
+  private_max_parts: 3
+  retry_once: true
+
+trace:
+  enabled: true
+  preview_chars: 240
+
+lock_retry:
+  enabled: true
+  max_retries: 5
+  base_delay_ms: 50

@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
+from sqlalchemy import create_engine as create_sync_engine
+from sqlalchemy import inspect
 from sqlalchemy.exc import OperationalError
 
 from plugins.qq_recorder.config import build_config
@@ -197,3 +199,79 @@ def test_image_fast_path_reuses_local_file_without_redownload(
         return download_calls["count"]
 
     assert asyncio.run(_run()) == 1
+
+
+def test_storage_init_db_adds_sender_columns_for_existing_database(tmp_path: Path):
+    db_path = tmp_path / "recorder.db"
+    engine = create_sync_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id VARCHAR NOT NULL UNIQUE,
+                user_id VARCHAR NOT NULL,
+                group_id VARCHAR,
+                chat_type VARCHAR NOT NULL,
+                timestamp DATETIME NOT NULL,
+                raw_message TEXT NOT NULL,
+                has_image BOOLEAN DEFAULT FALSE,
+                has_reply BOOLEAN DEFAULT FALSE,
+                has_forward BOOLEAN DEFAULT FALSE,
+                has_at BOOLEAN DEFAULT FALSE,
+                has_app_share BOOLEAN DEFAULT FALSE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    engine.dispose()
+
+    async def _run() -> set[str]:
+        storage = MessageStorage(str(db_path))
+        await storage.init_db()
+        await storage.close()
+        inspector = inspect(create_sync_engine(f"sqlite:///{db_path}"))
+        return {column["name"] for column in inspector.get_columns("messages")}
+
+    columns = asyncio.run(_run())
+    assert "sender_nickname" in columns
+    assert "sender_card" in columns
+
+
+def test_message_processor_persists_sender_display_fields(tmp_path: Path):
+    async def _run():
+        db_path = tmp_path / "recorder.db"
+        settings = build_config(
+            {
+                "monitor_all": True,
+                "image": {"download": False},
+                "forward": {"parse_content": False},
+                "backup": {"enabled": False},
+                "storage": {"database": str(db_path)},
+            }
+        )
+        storage = MessageStorage(str(db_path))
+        await storage.init_db()
+        processor = MessageProcessor(storage, settings, _DummyAPI(), _DummyLogger())
+
+        message_id = await processor.process_message(
+            {
+                "message_type": "group",
+                "message_id": "m-1",
+                "user_id": "u1",
+                "group_id": "g1",
+                "time": 1_712_345_678,
+                "raw_message": "hello",
+                "message": [{"type": "text", "data": {"text": "hello"}}],
+                "sender": {"nickname": "tester", "card": "群名片"},
+            }
+        )
+        stored = await storage.get_message("m-1")
+        await storage.close()
+        return message_id, stored
+
+    message_id, stored = asyncio.run(_run())
+    assert message_id is not None
+    assert stored is not None
+    assert stored.sender_nickname == "tester"
+    assert stored.sender_card == "群名片"

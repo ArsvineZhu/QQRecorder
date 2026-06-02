@@ -39,6 +39,15 @@ data/
 .env
 .env.*
 
+# Local app config
+config.yaml
+config.local.yaml
+!config.example.yaml
+plugins/qq_recorder/config.yaml
+plugins/qq_grok_reply/config.yaml
+!plugins/qq_recorder/config.example.yaml
+!plugins/qq_grok_reply/config.example.yaml
+
 # Napcat
 napcat/
 docs/
