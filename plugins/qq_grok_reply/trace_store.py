@@ -2,6 +2,7 @@ import json
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql import desc
 
 from .models import Base, ReplyTrace, init_engine
 
@@ -105,3 +106,21 @@ class TraceStore:
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
+
+    async def get_sent_message_ids(
+        self, chat_type: str, chat_id: str, *, limit: int = 50
+    ) -> set[str]:
+        async with self._session() as session:
+            stmt = (
+                select(ReplyTrace.sent_message_id)
+                .where(
+                    ReplyTrace.chat_type == chat_type,
+                    ReplyTrace.chat_id == chat_id,
+                    ReplyTrace.sent.is_(True),
+                    ReplyTrace.sent_message_id.is_not(None),
+                )
+                .order_by(desc(ReplyTrace.created_at), desc(ReplyTrace.id))
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            return {str(item) for item in result.scalars() if item}

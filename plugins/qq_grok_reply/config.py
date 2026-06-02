@@ -228,6 +228,9 @@ def _validate_runtime_limits(settings: ReplyPluginSettings) -> None:
 
 
 def _validate_targets(settings: ReplyPluginSettings) -> None:
+    if not settings.enabled or settings.monitor_all:
+        return
+
     for item in settings.targets.groups + settings.targets.private:
         if item and not str(item).isdigit():
             raise ValueError("target identifiers must contain only digits")

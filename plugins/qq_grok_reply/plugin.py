@@ -9,7 +9,12 @@ from ncatbot.event.qq import GroupMessageEvent, PrivateMessageEvent
 from ncatbot.plugin import NcatBotPlugin
 from ncatbot.types import MessageArray
 
-from .config import ReplyPluginSettings, build_config
+from .config import (
+    RECORDER_COMMAND_PREFIXES,
+    ReplyPluginSettings,
+    build_config,
+    is_chat_targeted,
+)
 from .context_builder import build_context
 from .model_client import ReplyModelError, generate_reply
 from .recorder_bridge import RecorderBridge
@@ -64,7 +69,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
 
     async def _handle(self, event, _chat_type: str) -> None:
         prefilter_reason = prefilter_event(event, self.settings)
-        if prefilter_reason is None:
+        if prefilter_reason is None and not self._may_be_reply_to_bot(event):
             return
 
         bridge = self._require_bridge()
@@ -75,13 +80,20 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             timeout_ms=self.settings.read_after_write.timeout_ms,
             backoff_ms=self.settings.read_after_write.backoff_ms,
         )
+        bot_reply_message_ids = (
+            await trace_store.get_sent_message_ids(
+                *_chat_identity(event, source_msg),
+            )
+            if prefilter_reason is None and self.settings.trigger.allow_reply_to_bot
+            else set()
+        )
         allowed, decision_reason = final_decision(
             event,
             source_msg=source_msg,
             prefilter_reason=prefilter_reason,
             settings=self.settings,
             cooldowns=self._cooldowns,
-            bot_reply_message_ids=set(),
+            bot_reply_message_ids=bot_reply_message_ids,
         )
 
         prompt_variant = (
@@ -188,6 +200,39 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             self._trace_store = TraceStore(self.settings.recorder_db or ":memory:")
         return self._trace_store
 
+    def _may_be_reply_to_bot(self, event) -> bool:
+        if not self.settings.enabled or not self.settings.trigger.allow_reply_to_bot:
+            return False
+
+        user_id = str(getattr(event, "user_id", "") or "")
+        self_id = str(getattr(event, "self_id", "") or "")
+        if (
+            self.settings.trigger.ignore_self
+            and user_id
+            and self_id
+            and user_id == self_id
+        ):
+            return False
+
+        raw_message = str(getattr(event, "raw_message", "") or "").strip()
+        if (
+            self.settings.trigger.ignore_recorder_command
+            and raw_message
+            and raw_message.split()[0].lower() in RECORDER_COMMAND_PREFIXES
+        ):
+            return False
+
+        chat_type = "group" if getattr(event, "group_id", None) else "private"
+        if chat_type == "group" and not self.settings.trigger.group_enabled:
+            return False
+        if chat_type == "private" and not self.settings.trigger.private_enabled:
+            return False
+
+        chat_id = str(
+            getattr(event, "group_id", None) or getattr(event, "user_id", "") or ""
+        )
+        return bool(chat_id and is_chat_targeted(chat_type, chat_id, self.settings))
+
     async def _send_failure_fallback(self, event, decision_reason: str) -> SendOutcome:
         is_group = getattr(event, "group_id", None) is not None
         should_send = not is_group or decision_reason.startswith("prefix:")
@@ -228,3 +273,18 @@ def _sender_name(event) -> str:
         if value:
             return str(value)
     return str(getattr(event, "user_id", "") or "")
+
+
+def _chat_identity(event, source_msg) -> tuple[str, str]:
+    chat_type = str(getattr(source_msg, "chat_type", "") or "")
+    if not chat_type:
+        chat_type = (
+            "group" if getattr(event, "group_id", None) is not None else "private"
+        )
+    chat_id = str(
+        getattr(source_msg, "group_id", None)
+        or getattr(event, "group_id", None)
+        or getattr(source_msg, "user_id", "")
+        or getattr(event, "user_id", "")
+    )
+    return chat_type, chat_id

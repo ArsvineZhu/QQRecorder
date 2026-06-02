@@ -56,6 +56,8 @@ def test_trace_store_inserts_updates_and_deduplicates(tmp_path: Path):
         assert trace.sent is True
         assert trace.sent_message_id == "bot-1"
         assert trace.sent_parts == 2
+        assert await store.get_sent_message_ids("group", "30001") == {"bot-1"}
+        assert await store.get_sent_message_ids("private", "20001") == set()
 
         await store.close()
 

@@ -70,6 +70,38 @@ def test_build_config_requires_recorder_db_when_enabled():
         build_config({"enabled": True})
 
 
+def test_build_config_skips_unused_placeholder_target_validation():
+    disabled_settings = build_config(
+        {
+            "enabled": False,
+            "targets": {"groups": ["group_id_here"], "private": ["user_id_here"]},
+        }
+    )
+    assert disabled_settings.targets.groups == ["group_id_here"]
+
+    monitor_all_settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "monitor_all": True,
+            "targets": {"groups": ["group_id_here"], "private": ["user_id_here"]},
+        }
+    )
+    assert monitor_all_settings.monitor_all is True
+
+
+def test_build_config_validates_used_targets():
+    with pytest.raises(ValueError, match="target identifiers"):
+        build_config(
+            {
+                "enabled": True,
+                "recorder_db": "C:/tmp/recorder.db",
+                "monitor_all": False,
+                "targets": {"groups": ["group_id_here"]},
+            }
+        )
+
+
 def test_prefilter_private_message_uses_private_default():
     settings = build_config(
         {
