@@ -2,8 +2,10 @@ import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
+
 from plugins.qq_grok_reply.config import build_config
-from plugins.qq_grok_reply.context_builder import build_context
+from plugins.qq_grok_reply.context_builder import TopicContextError, build_context
 
 
 class _BridgeStub:
@@ -182,6 +184,46 @@ def test_build_context_respects_private_budget_and_recent_limit():
     assert len(built.quoted_block) <= 20
 
 
+def test_build_context_recent_messages_are_chronological():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "context": {"mode": "recent", "recent_limit_group": 3},
+        }
+    )
+    source = _message(
+        "m-current",
+        raw_message="当前",
+        timestamp=datetime(2024, 6, 2, 12, 30),
+    )
+    older = _message(
+        "m-older",
+        raw_message="较早",
+        timestamp=datetime(2024, 6, 2, 12, 27),
+    )
+    middle = _message(
+        "m-middle",
+        raw_message="中间",
+        timestamp=datetime(2024, 6, 2, 12, 28),
+    )
+    newer = _message(
+        "m-newer",
+        raw_message="较新",
+        timestamp=datetime(2024, 6, 2, 12, 29),
+    )
+
+    built = asyncio.run(
+        build_context(
+            source, _BridgeStub(None, [source, newer, middle, older]), settings
+        )
+    )
+
+    assert built.context_ids == ["m-current", "m-older", "m-middle", "m-newer"]
+    assert built.recent_block.index("[12:27]") < built.recent_block.index("[12:28]")
+    assert built.recent_block.index("[12:28]") < built.recent_block.index("[12:29]")
+
+
 def test_build_context_renders_share_placeholder_with_title_or_app_name():
     settings = build_config(
         {
@@ -306,3 +348,28 @@ def test_build_context_topic_ai_invalid_json_falls_back_to_recent():
     assert built.topic_fallback_used is True
     assert built.topic_error_code == "topic_invalid_tool_arguments"
     assert built.context_ids == ["m-current", "m-r1", "m-r2"]
+
+
+def test_build_context_topic_ai_invalid_json_raises_when_fallback_disabled():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "context": {"mode": "topic_ai", "fallback_recent_limit_group": 2},
+            "topic_analyzer": {"fallback_to_recent": False},
+        }
+    )
+    source = _message("m-current", raw_message="现在聊什么")
+    recent = [
+        source,
+        _message("m-r1", raw_message="话题一"),
+        _message("m-r2", raw_message="话题二"),
+    ]
+    api = SimpleNamespace(ai=_FakeAIAPI("不是 JSON"))
+
+    with pytest.raises(TopicContextError) as exc_info:
+        asyncio.run(
+            build_context(source, _BridgeStub(None, recent), settings, analyzer_api=api)
+        )
+
+    assert exc_info.value.analysis.error_code == "topic_invalid_tool_arguments"

@@ -10,6 +10,12 @@ from .topic_analyzer import TopicAnalysis, analyze_topic, validate_topic_analysi
 unescape_text = import_sibling_plugin_module("qq_recorder.text_utils").unescape_text
 
 
+class TopicContextError(RuntimeError):
+    def __init__(self, analysis: TopicAnalysis):
+        super().__init__(analysis.error_code or "topic_context_error")
+        self.analysis = analysis
+
+
 @dataclass
 class BuiltContext:
     context_ids: list[str]
@@ -105,11 +111,14 @@ async def _build_topic_context(
         )
     except AttributeError:
         candidates = await bridge.get_recent(chat_type, chat_id, candidate_limit)
-    except Exception:
+    except Exception as exc:
+        analysis = TopicAnalysis(error_code="topic_candidate_read_failed")
+        if not settings.topic_analyzer.fallback_to_recent:
+            raise TopicContextError(analysis) from exc
         fallback = await _fallback_context(
             source_msg, bridge, settings, event, trigger_reason, sender_name, is_group
         )
-        fallback.topic_error_code = "topic_candidate_read_failed"
+        fallback.topic_error_code = analysis.error_code
         return fallback
 
     candidate_by_id = {str(message.message_id): message for message in candidates}
@@ -144,6 +153,8 @@ async def _build_topic_context(
     )
     analysis.candidate_count = len(candidate_by_id)
     if analysis.error_code:
+        if not settings.topic_analyzer.fallback_to_recent:
+            raise TopicContextError(analysis)
         fallback = await _fallback_context(
             source_msg, bridge, settings, event, trigger_reason, sender_name, is_group
         )
@@ -162,9 +173,9 @@ async def _build_topic_context(
         reply_to_id=reply_to_id,
         max_selected=max_selected,
     )
-    selected_messages = [
-        candidate_by_id[item] for item in selected_ids if item in candidate_by_id
-    ]
+    selected_messages = _chronological_messages(
+        [candidate_by_id[item] for item in selected_ids if item in candidate_by_id]
+    )
     return _assemble_context(
         source_msg,
         selected_messages,
@@ -236,7 +247,7 @@ async def _build_recent_context(
             break
     return _assemble_context(
         source_msg,
-        recent_selected,
+        _chronological_messages(recent_selected),
         settings,
         event=event,
         trigger_reason=trigger_reason,
@@ -595,6 +606,13 @@ def _selected_ids_with_priority(
     result.extend(selected_ids)
     result.append(current_id)
     return _unique(result)[-max_selected:]
+
+
+def _chronological_messages(messages: list[Any]) -> list[Any]:
+    return sorted(
+        messages,
+        key=lambda message: _coerce_datetime(getattr(message, "timestamp", None)),
+    )
 
 
 def _trim(text: str, limit: int) -> str:
