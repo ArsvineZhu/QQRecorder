@@ -26,6 +26,8 @@ class Message(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     message_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     user_id: Mapped[str] = mapped_column(String, nullable=False)
+    sender_nickname: Mapped[str | None] = mapped_column(String, nullable=True)
+    sender_card: Mapped[str | None] = mapped_column(String, nullable=True)
     group_id: Mapped[str | None] = mapped_column(String, nullable=True)
     chat_type: Mapped[str] = mapped_column(String, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)

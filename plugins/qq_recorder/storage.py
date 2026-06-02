@@ -45,6 +45,7 @@ class MessageStorage:
             self.db_path, sqlite_timeout=self.sqlite_timeout
         )
         async with self.engine.begin() as conn:
+            await conn.run_sync(_ensure_message_sender_columns)
             await conn.run_sync(Base.metadata.create_all)
 
     async def close(self):
@@ -108,6 +109,8 @@ class MessageStorage:
                     message = Message(
                         message_id=message_data["message_id"],
                         user_id=message_data["user_id"],
+                        sender_nickname=message_data.get("sender_nickname"),
+                        sender_card=message_data.get("sender_card"),
                         group_id=message_data["group_id"],
                         chat_type=message_data["chat_type"],
                         timestamp=message_data["timestamp"],
@@ -207,6 +210,7 @@ class MessageStorage:
                         selectinload(ForwardMessage.children)
                     ),
                     selectinload(Message.at_mentions),
+                    selectinload(Message.app_shares),
                 )
             )
             result = await session.execute(stmt)
@@ -221,6 +225,7 @@ class MessageStorage:
                 .options(
                     selectinload(Message.images),
                     selectinload(Message.at_mentions),
+                    selectinload(Message.app_shares),
                 )
                 .order_by(desc(Message.timestamp))
             )
@@ -318,6 +323,7 @@ class MessageStorage:
                 .options(
                     selectinload(Message.images),
                     selectinload(Message.at_mentions),
+                    selectinload(Message.app_shares),
                 )
                 .where(Message.raw_message.contains(keyword))
                 .order_by(desc(Message.timestamp))
@@ -495,3 +501,17 @@ class MessageStorage:
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none() is not None
+
+
+def _ensure_message_sender_columns(sync_conn) -> None:
+    result = sync_conn.exec_driver_sql("PRAGMA table_info(messages)")
+    rows = list(result.fetchall())
+    if not rows:
+        return
+    columns = {row[1] for row in rows}
+    if "sender_nickname" not in columns:
+        sync_conn.exec_driver_sql(
+            "ALTER TABLE messages ADD COLUMN sender_nickname VARCHAR"
+        )
+    if "sender_card" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN sender_card VARCHAR")

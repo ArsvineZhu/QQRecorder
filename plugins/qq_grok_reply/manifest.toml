@@ -1,0 +1,6 @@
+name = "qq_grok_reply"
+version = "0.1.0"
+main = "plugin.py"
+entry_class = "QQGrokReplyPlugin"
+author = "Arsvine Zhu"
+description = "基于 QQRecorder 的受控 AI 回复插件"

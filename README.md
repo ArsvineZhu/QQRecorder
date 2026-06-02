@@ -18,6 +18,7 @@
 - **增量备份** — 内置定时备份 SQLite 与图片，支持按天全量 + 日内增量
 - **灵活配置** — 支持全量监控或指定群/私聊监控
 - **异步存储** — 基于 SQLAlchemy + aiosqlite 的异步数据库，不阻塞消息处理
+- **可选回复插件** — 新增 `qq_grok_reply` 平行插件，可在命中 @bot、前缀或私聊触发时基于 `recorder.db` 上下文生成回复，并将行为写入 `reply_traces`
 
 ## 架构概览
 
@@ -86,48 +87,121 @@ pip install -e .
 
 ### 4. 配置插件
 
-编辑项目根目录 `config.yaml` 中的 `plugin.plugin_configs.qq_recorder`：
+仓库提供三类可提交的示例配置：
+
+- 根配置：[config.example.yaml](D:/Dev/PythonProjects/QQRecorder/config.example.yaml)
+- 记录插件：[plugins/qq_recorder/config.example.yaml](D:/Dev/PythonProjects/QQRecorder/plugins/qq_recorder/config.example.yaml)
+- 回复插件：[plugins/qq_grok_reply/config.example.yaml](D:/Dev/PythonProjects/QQRecorder/plugins/qq_grok_reply/config.example.yaml)
+
+实际运行时请分别使用本地真实文件：
+
+- 根配置：`config.yaml`
+- 记录插件：`plugins/qq_recorder/config.yaml`
+- 回复插件：`plugins/qq_grok_reply/config.yaml`
+
+这些真实配置都已加入 `.gitignore`，用于保存你自己的 QQ 号、token、本地路径和 AI Key 配置。
+
+可先从示例生成本地配置：
+
+```bash
+copy config.example.yaml config.yaml
+copy plugins\qq_recorder\config.example.yaml plugins\qq_recorder\config.yaml
+copy plugins\qq_grok_reply\config.example.yaml plugins\qq_grok_reply\config.yaml
+```
+
+然后编辑插件自己的配置文件。`qq_recorder` 配置写在 `plugins/qq_recorder/config.yaml`：
 
 ```yaml
-bot_uin: '你的QQ号'              # 机器人 QQ 号
-root: '管理员QQ号'               # 管理员 QQ 号（用于执行命令）
-
-plugin:
-  plugin_configs:
-    qq_recorder:
-      # 监控模式：true = 记录所有消息，false = 仅记录 targets 中的目标
-      monitor_all: true
-      # 监控目标（monitor_all 为 false 时生效）
-      targets:
-        groups: ["群号1", "群号2"]    # 要监控的群号列表
-        private: ["QQ号1"]            # 要监控的私聊对象 QQ 号列表
-      storage:
-        database: data/recorder.db    # 数据库路径（相对于插件工作目录）
-        images_dir: data/images       # 图片存储目录（相对于插件工作目录）
-        lock_retry:
-          enabled: true               # 启用 SQLite 锁冲突重试
-          max_retries: 5              # 最大重试次数
-          base_delay_ms: 50           # 首次退避毫秒（指数退避）
-      image:
-        download: true                # 是否下载图片
-        timeout: 30                   # 下载超时时间（秒）
-        max_file_size: 52428800       # 最大文件大小（字节），默认 50MB
-      processing:
-        max_inflight: 48              # 消息处理并发上限（背压）
-        image_download_concurrency: 4 # 图片下载并发上限
-      forward:
-        max_depth: 10                 # 合并转发消息最大递归深度
-        parse_content: true           # 是否解析转发内容
-      backup:
-        enabled: true                 # 是否启用定时备份
-        output_dir: data/backups      # 备份输出目录（相对于插件工作目录）
-        keep_last: 7                  # 保留最近 N 个全量链
-        full_interval_days: 7         # 每隔 N 天执行一次全量备份
-        full_time: "03:00"            # 全量备份时间（HH:MM）
-        incremental_times:            # 每日增量备份时间列表
-          - "12:00"
-          - "18:00"
+# 监控模式：true = 记录所有消息，false = 仅记录 targets 中的目标
+monitor_all: true
+# 监控目标（monitor_all 为 false 时生效）
+targets:
+  groups: ["群号1", "群号2"]    # 要监控的群号列表
+  private: ["QQ号1"]            # 要监控的私聊对象 QQ 号列表
+storage:
+  database: data/recorder.db    # 数据库路径（相对于插件工作目录）
+  images_dir: data/images       # 图片存储目录（相对于插件工作目录）
+  lock_retry:
+    enabled: true               # 启用 SQLite 锁冲突重试
+    max_retries: 5              # 最大重试次数
+    base_delay_ms: 50           # 首次退避毫秒（指数退避）
+image:
+  download: true                # 是否下载图片
+  timeout: 30                   # 下载超时时间（秒）
+  max_file_size: 52428800       # 最大文件大小（字节），默认 50MB
+processing:
+  max_inflight: 48              # 消息处理并发上限（背压）
+  image_download_concurrency: 4 # 图片下载并发上限
+forward:
+  max_depth: 10                 # 合并转发消息最大递归深度
+  parse_content: true           # 是否解析转发内容
+backup:
+  enabled: true                 # 是否启用定时备份
+  output_dir: data/backups      # 备份输出目录（相对于插件工作目录）
+  keep_last: 7                  # 保留最近 N 个全量链
+  full_interval_days: 7         # 每隔 N 天执行一次全量备份
+  full_time: "03:00"            # 全量备份时间（HH:MM）
+  incremental_times:            # 每日增量备份时间列表
+    - "12:00"
+    - "18:00"
 ```
+
+如需启用配套回复插件 `qq_grok_reply`，编辑 `plugins/qq_grok_reply/config.yaml`：
+
+```yaml
+enabled: false
+recorder_db: "D:/absolute/path/to/recorder.db"  # 必须填写 QQRecorder 实际使用的绝对路径
+monitor_all: false
+targets:
+  groups: ["群号1"]
+  private: ["QQ号1"]
+trigger:
+  private_enabled: true
+  group_enabled: true
+  prefixes: ["/ask", "/ai", "grok"]
+  allow_at: true
+  allow_reply_to_bot: false
+  ignore_self: true
+  ignore_recorder_command: true
+model:
+  provider: ncatbot_ai
+  model: ""                        # 留空时使用 AI 适配器的 completion_model
+  temperature: 0.7
+  max_tokens_group: 220
+  max_tokens_private: 420
+  timeout_sec: 12
+  retries: 1
+  llm_concurrency: 2
+send:
+  group_use_reply_segment: true
+  group_at_sender: false
+  group_max_chars_per_part: 250
+  private_max_chars_per_part: 500
+  group_max_parts: 2
+  private_max_parts: 3
+```
+
+如果要真正接入模型，还需要在根 `config.yaml` 的 `adapters` 中配置 NcatBot 的 `ai` 适配器，例如：
+
+```yaml
+adapters:
+  - type: ai
+    platform: ai
+    enabled: true
+    config:
+      api_key: ""                       # 建议改用环境变量，例如 DEEPSEEK_API_KEY
+      base_url: "https://api.deepseek.com"
+      completion_model: "deepseek-chat"
+      timeout: 120.0
+      max_tokens: null
+```
+
+`qq_grok_reply` 是与 `qq_recorder` 平行加载的独立插件：
+
+- 只读 `qq_recorder` 已写入的事实表，不修改 `qq_recorder` 主记录链路
+- 只在显式命中私聊、前缀或 `@bot` 条件时回复
+- 将调试与发送结果写入同库中的 `reply_traces` 表
+- `recorder_db` 必须填 **QQRecorder 实际解析后的绝对路径**；不要复用相对路径猜测
 
 ## 使用
 
@@ -148,6 +222,13 @@ uv run ncatbot run
 | `/recorder search <关键词>` | 搜索包含关键词的消息（最多 10 条） |
 
 > 命令前缀支持：`recorder`、`/recorder`、`r`、`/r`（不区分大小写）
+
+### `qq_grok_reply` 触发规则
+
+- 私聊：命中 `targets.private` 且 `private_enabled=true` 时默认可回复
+- 群聊：仅在 `@bot` 或前缀（默认 `/ask`、`/ai`、`grok`）命中时回复
+- 普通群聊消息、`/recorder ...` 命令、自发消息默认不触发
+- 关闭插件只需将 `plugins/qq_grok_reply/config.yaml` 中的 `enabled` 设回 `false`
 
 ### 备份工具
 
@@ -173,7 +254,7 @@ QQRecorder/
 ├── README.md                   # 项目文档
 ├── AGENTS.md                   # AI 辅助开发知识库
 ├── pyproject.toml              # Python 项目配置与依赖
-├── config.yaml                 # NcatBot 主配置
+├── config.example.yaml         # 可提交的 NcatBot 全局配置示例
 ├── scripts/
 │   ├── export_db.py            # 数据库导出与查询工具
 │   ├── backup_tool.py          # 备份归档查看与恢复工具
@@ -193,6 +274,7 @@ QQRecorder/
     │       └── images/         # 图片存储目录
     └── plugins/
         └── qq_recorder/        # 核心插件代码
+            ├── config.example.yaml # 记录插件配置示例
             ├── plugin.py        # 插件入口，生命周期与事件注册
             ├── events.py        # 事件转换、命令检测、日志格式化
             ├── commands.py      # 命令处理（stats/recent/search）
@@ -330,6 +412,7 @@ python scripts/migrate_add_app_share.py
 | `forward_messages` | 合并转发：支持树形嵌套结构 |
 | `at_mentions` | @提及记录 |
 | `monitored_chats` | 监控目标管理 |
+| `reply_traces` | `qq_grok_reply` 的回复决策、模型摘要、发送结果与错误码 |
 
 ## 图片存储
 
@@ -364,11 +447,18 @@ data/images/
 
 **Q: 插件配置放在哪里？**
 
-插件配置位于项目根目录 `config.yaml` 的 `plugin.plugin_configs.qq_recorder` 下，不需要单独的 `recorder/config.yaml`。
+全局配置放在项目根目录的本地 `config.yaml`。插件配置分别放在各自目录下的本地配置文件：
+
+- `plugins/qq_recorder/config.yaml`
+- `plugins/qq_grok_reply/config.yaml`
+
+仓库跟踪的是对应的 `*.example.yaml`。如果确实需要统一覆盖，NcatBot 仍支持在全局 `config.yaml` 的 `plugin.plugin_configs.*` 中追加高优先级覆盖，但本项目默认不再把插件主配置放在全局文件里。
 
 **Q: 数据库路径和图片路径是相对于哪里？**
 
 插件配置中的 `database` 和 `images_dir` 路径都相对于插件工作目录（`recorder/data/qq_recorder/`），而不是项目根目录。例如配置 `database: data/recorder.db` 的实际路径为 `recorder/data/qq_recorder/data/recorder.db`。
+
+`qq_grok_reply.recorder_db` 例外：它必须填写 **QQRecorder 启动后实际使用的 `recorder.db` 绝对路径**，因为回复插件与记录插件不是同一个 workspace。
 
 **Q: `file_unique` 字段为什么总是 "0"？**
 

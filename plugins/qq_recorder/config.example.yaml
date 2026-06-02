@@ -1,0 +1,37 @@
+monitor_all: false
+
+targets:
+  groups: ["group_id_here"]
+  private: ["qq_id_here"]
+
+image:
+  download: true
+  timeout: 60
+  max_file_size: 52428800
+
+processing:
+  max_inflight: 48
+  image_download_concurrency: 4
+
+storage:
+  database: data/recorder.db
+  images_dir: data/images
+  lock_retry:
+    enabled: true
+    max_retries: 5
+    base_delay_ms: 50
+
+forward:
+  max_depth: 8
+  parse_content: true
+
+backup:
+  enabled: true
+  output_dir: data/backups
+  keep_last: 7
+  full_interval_days: 7
+  full_time: "14:00"
+  incremental_times:
+    - "12:00"
+    - "18:00"
+    - "23:00"

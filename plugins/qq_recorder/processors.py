@@ -64,6 +64,8 @@ class MessageProcessor:
                 message_data = {
                     "message_id": event["message_id"],
                     "user_id": event["user_id"],
+                    "sender_nickname": event.get("sender", {}).get("nickname", ""),
+                    "sender_card": event.get("sender", {}).get("card", ""),
                     "group_id": event.get("group_id"),
                     "chat_type": chat_type,
                     "timestamp": datetime.fromtimestamp(event["time"]),

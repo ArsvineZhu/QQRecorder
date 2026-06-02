@@ -1,0 +1,53 @@
+adapters:
+  - type: napcat
+    platform: qq
+    enabled: true
+    config:
+      enable_webui: true
+      webui_token: "replace-with-your-webui-token"
+      webui_uri: http://127.0.0.1:6099
+      ws_token: "replace-with-your-ws-token"
+      ws_listen_ip: 127.0.0.1
+      ws_uri: ws://127.0.0.1:3002
+
+  - type: ai
+    platform: ai
+    enabled: true
+    config:
+      api_key: "" # Prefer environment variables such as DEEPSEEK_API_KEY / OPENAI_API_KEY
+      base_url: "https://api.deepseek.com"
+      completion_model: "deepseek-chat"
+      timeout: 120.0
+      max_tokens: null
+
+bot_uin: "your-bot-qq"
+root: "your-admin-qq"
+check_ncatbot_update: true
+debug: false
+enable_webui_interaction: true
+logging:
+  event_log_format: summary
+  event_log_levels:
+    meta_event: NONE
+
+plugin:
+  auto_install_pip_deps: true
+  builtin_commands:
+    config_toggle: true
+    load: true
+    reload: true
+    sysinfo: true
+    unload: true
+  builtin_commands_group_allowed: false
+  enable_builtin_commands: true
+  hot_reload: true
+  load_plugin: true
+  plugin_blacklist: []
+  plugin_whitelist: []
+  plugins_dir: plugins
+  skip_pip_install_confirm: false
+  plugin_configs: {}
+
+skip_napcat_install_confirm: false
+skip_ncatbot_install_check: false
+websocket_timeout: 15
