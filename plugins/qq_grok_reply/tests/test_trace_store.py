@@ -21,6 +21,14 @@ def test_trace_store_inserts_updates_and_deduplicates(tmp_path: Path):
             trigger_reason="group_at_bot",
             context_ids=["m-1"],
             prompt_variant="group_compact",
+            topic_title="硬盘选择",
+            topic_summary="讨论硬盘容量",
+            topic_participants_json='[{"name":"A"}]',
+            topic_selected_ids_json='["m-1"]',
+            topic_candidate_count=12,
+            topic_confidence=0.75,
+            topic_error_code="",
+            topic_fallback_used=False,
         )
         duplicate_id = await store.insert_trace(
             source_message_id="m-1",
@@ -56,6 +64,10 @@ def test_trace_store_inserts_updates_and_deduplicates(tmp_path: Path):
         assert trace.sent is True
         assert trace.sent_message_id == "bot-1"
         assert trace.sent_parts == 2
+        assert trace.topic_title == "硬盘选择"
+        assert trace.topic_candidate_count == 12
+        assert trace.topic_confidence == 0.75
+        assert trace.topic_fallback_used is False
         assert await store.get_sent_message_ids("group", "30001") == {"bot-1"}
         assert await store.get_sent_message_ids("private", "20001") == set()
 

@@ -28,14 +28,36 @@ class ReadAfterWriteConfig:
 
 @dataclass
 class ContextConfig:
+    mode: str = "topic_ai"
     recent_limit_group: int = 6
     recent_limit_private: int = 10
     quote_chars_group: int = 320
     quote_chars_private: int = 480
-    total_chars_group: int = 1200
+    total_chars_group: int = 6000
     total_chars_private: int = 2200
     recent_chars_group: int = 120
     recent_chars_private: int = 180
+    candidate_limit_group: int = 80
+    candidate_limit_private: int = 30
+    candidate_time_window_minutes_group: int = 45
+    candidate_time_window_minutes_private: int = 30
+    selected_max_messages_group: int = 20
+    selected_max_messages_private: int = 12
+    forward_max_items: int = 12
+    forward_max_chars: int = 1600
+    fallback_recent_limit_group: int = 16
+    fallback_recent_limit_private: int = 12
+
+
+@dataclass
+class TopicAnalyzerConfig:
+    enabled: bool = True
+    model: str = ""
+    temperature: float = 0.2
+    timeout_sec: int = 8
+    min_confidence: float = 0.45
+    fallback_to_recent: bool = True
+    max_summary_chars: int = 800
 
 
 @dataclass
@@ -90,6 +112,7 @@ class ReplyPluginSettings:
     trigger: TriggerConfig = field(default_factory=TriggerConfig)
     read_after_write: ReadAfterWriteConfig = field(default_factory=ReadAfterWriteConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+    topic_analyzer: TopicAnalyzerConfig = field(default_factory=TopicAnalyzerConfig)
     cooldown: CooldownConfig = field(default_factory=CooldownConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     send: SendConfig = field(default_factory=SendConfig)
@@ -102,6 +125,7 @@ def build_config(raw: dict) -> ReplyPluginSettings:
     trigger_data = raw.get("trigger", {})
     read_after_write_data = raw.get("read_after_write", {})
     context_data = raw.get("context", {})
+    topic_analyzer_data = raw.get("topic_analyzer", {})
     cooldown_data = raw.get("cooldown", {})
     model_data = raw.get("model", {})
     send_data = raw.get("send", {})
@@ -130,14 +154,46 @@ def build_config(raw: dict) -> ReplyPluginSettings:
             backoff_ms=list(read_after_write_data.get("backoff_ms", [20, 40, 80, 160])),
         ),
         context=ContextConfig(
+            mode=context_data.get("mode", "topic_ai"),
             recent_limit_group=context_data.get("recent_limit_group", 6),
             recent_limit_private=context_data.get("recent_limit_private", 10),
             quote_chars_group=context_data.get("quote_chars_group", 320),
             quote_chars_private=context_data.get("quote_chars_private", 480),
-            total_chars_group=context_data.get("total_chars_group", 1200),
+            total_chars_group=context_data.get("total_chars_group", 6000),
             total_chars_private=context_data.get("total_chars_private", 2200),
             recent_chars_group=context_data.get("recent_chars_group", 120),
             recent_chars_private=context_data.get("recent_chars_private", 180),
+            candidate_limit_group=context_data.get("candidate_limit_group", 80),
+            candidate_limit_private=context_data.get("candidate_limit_private", 30),
+            candidate_time_window_minutes_group=context_data.get(
+                "candidate_time_window_minutes_group", 45
+            ),
+            candidate_time_window_minutes_private=context_data.get(
+                "candidate_time_window_minutes_private", 30
+            ),
+            selected_max_messages_group=context_data.get(
+                "selected_max_messages_group", 20
+            ),
+            selected_max_messages_private=context_data.get(
+                "selected_max_messages_private", 12
+            ),
+            forward_max_items=context_data.get("forward_max_items", 12),
+            forward_max_chars=context_data.get("forward_max_chars", 1600),
+            fallback_recent_limit_group=context_data.get(
+                "fallback_recent_limit_group", 16
+            ),
+            fallback_recent_limit_private=context_data.get(
+                "fallback_recent_limit_private", 12
+            ),
+        ),
+        topic_analyzer=TopicAnalyzerConfig(
+            enabled=topic_analyzer_data.get("enabled", True),
+            model=topic_analyzer_data.get("model", ""),
+            temperature=topic_analyzer_data.get("temperature", 0.2),
+            timeout_sec=topic_analyzer_data.get("timeout_sec", 8),
+            min_confidence=topic_analyzer_data.get("min_confidence", 0.45),
+            fallback_to_recent=topic_analyzer_data.get("fallback_to_recent", True),
+            max_summary_chars=topic_analyzer_data.get("max_summary_chars", 800),
         ),
         cooldown=CooldownConfig(
             group_chat_sec=cooldown_data.get("group_chat_sec", 2.0),
@@ -197,6 +253,8 @@ def _validate_required_fields(settings: ReplyPluginSettings) -> None:
 
 
 def _validate_runtime_limits(settings: ReplyPluginSettings) -> None:
+    if settings.context.mode not in {"topic_ai", "recent"}:
+        raise ValueError("context.mode must be 'topic_ai' or 'recent'")
     if (
         settings.context.recent_limit_group <= 0
         or settings.context.recent_limit_private <= 0
@@ -212,6 +270,7 @@ def _validate_runtime_limits(settings: ReplyPluginSettings) -> None:
         or settings.context.total_chars_private <= 0
     ):
         raise ValueError("context total limits must be > 0")
+    _validate_topic_limits(settings)
     if settings.model.timeout_sec <= 0:
         raise ValueError("model.timeout_sec must be > 0")
     if settings.model.llm_concurrency <= 0:
@@ -225,6 +284,28 @@ def _validate_runtime_limits(settings: ReplyPluginSettings) -> None:
         raise ValueError("send max parts must be > 0")
     if settings.lock_retry.max_retries < 0 or settings.lock_retry.base_delay_ms <= 0:
         raise ValueError("lock_retry values are invalid")
+
+
+def _validate_topic_limits(settings: ReplyPluginSettings) -> None:
+    context_numbers = (
+        settings.context.candidate_limit_group,
+        settings.context.candidate_limit_private,
+        settings.context.candidate_time_window_minutes_group,
+        settings.context.candidate_time_window_minutes_private,
+        settings.context.selected_max_messages_group,
+        settings.context.selected_max_messages_private,
+        settings.context.forward_max_items,
+        settings.context.forward_max_chars,
+        settings.context.fallback_recent_limit_group,
+        settings.context.fallback_recent_limit_private,
+        settings.topic_analyzer.max_summary_chars,
+    )
+    if any(value <= 0 for value in context_numbers):
+        raise ValueError("topic context limits must be > 0")
+    if not 0 <= settings.topic_analyzer.min_confidence <= 1:
+        raise ValueError("topic_analyzer.min_confidence must be between 0 and 1")
+    if settings.topic_analyzer.timeout_sec <= 0:
+        raise ValueError("topic_analyzer.timeout_sec must be > 0")
 
 
 def _validate_targets(settings: ReplyPluginSettings) -> None:

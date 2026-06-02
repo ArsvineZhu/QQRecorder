@@ -1,10 +1,21 @@
 import json
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import desc
 
 from .models import Base, ReplyTrace, init_engine
+
+_TOPIC_COLUMNS = {
+    "topic_title": "VARCHAR DEFAULT ''",
+    "topic_summary": "TEXT DEFAULT ''",
+    "topic_participants_json": "TEXT DEFAULT '[]'",
+    "topic_selected_ids_json": "TEXT DEFAULT '[]'",
+    "topic_candidate_count": "INTEGER DEFAULT 0",
+    "topic_confidence": "FLOAT DEFAULT 0.0",
+    "topic_error_code": "VARCHAR DEFAULT ''",
+    "topic_fallback_used": "BOOLEAN DEFAULT 0",
+}
 
 
 class TraceStore:
@@ -17,6 +28,7 @@ class TraceStore:
         self.engine, self.AsyncSessionLocal = await init_engine(self.db_path)
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_ensure_topic_columns)
 
     async def close(self) -> None:
         if self.engine is not None:
@@ -39,6 +51,14 @@ class TraceStore:
         trigger_reason: str,
         context_ids: list[str],
         prompt_variant: str,
+        topic_title: str = "",
+        topic_summary: str = "",
+        topic_participants_json: str = "[]",
+        topic_selected_ids_json: str = "[]",
+        topic_candidate_count: int = 0,
+        topic_confidence: float = 0.0,
+        topic_error_code: str = "",
+        topic_fallback_used: bool = False,
     ) -> int:
         existing = await self.get_by_source_message_id(source_message_id)
         if existing is not None:
@@ -56,6 +76,14 @@ class TraceStore:
                 trigger_reason=trigger_reason,
                 context_ids=json.dumps(context_ids, ensure_ascii=False),
                 prompt_variant=prompt_variant,
+                topic_title=topic_title,
+                topic_summary=topic_summary,
+                topic_participants_json=topic_participants_json,
+                topic_selected_ids_json=topic_selected_ids_json,
+                topic_candidate_count=topic_candidate_count,
+                topic_confidence=topic_confidence,
+                topic_error_code=topic_error_code,
+                topic_fallback_used=topic_fallback_used,
             )
             session.add(trace)
             try:
@@ -124,3 +152,12 @@ class TraceStore:
             )
             result = await session.execute(stmt)
             return {str(item) for item in result.scalars() if item}
+
+
+def _ensure_topic_columns(sync_conn) -> None:
+    columns = {
+        column["name"] for column in inspect(sync_conn).get_columns("reply_traces")
+    }
+    for name, ddl in _TOPIC_COLUMNS.items():
+        if name not in columns:
+            sync_conn.execute(text(f"ALTER TABLE reply_traces ADD COLUMN {name} {ddl}"))

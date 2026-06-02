@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import json
 import os
 import time
 from typing import Any, cast
@@ -133,6 +134,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                 event=event,
                 trigger_reason=decision_reason,
                 sender_name=_sender_name(event),
+                analyzer_api=self.api,
             )
         )
         trace_id = None
@@ -150,6 +152,14 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                 trigger_reason=decision_reason,
                 context_ids=ctx.context_ids,
                 prompt_variant=ctx.variant,
+                topic_title=ctx.topic_title,
+                topic_summary=ctx.topic_summary,
+                topic_participants_json=_json_list(ctx.topic_participants),
+                topic_selected_ids_json=_json_list(ctx.context_ids),
+                topic_candidate_count=ctx.topic_candidate_count,
+                topic_confidence=ctx.topic_confidence,
+                topic_error_code=ctx.topic_error_code,
+                topic_fallback_used=ctx.topic_fallback_used,
             )
 
         try:
@@ -288,3 +298,7 @@ def _chat_identity(event, source_msg) -> tuple[str, str]:
         or getattr(event, "user_id", "")
     )
     return chat_type, chat_id
+
+
+def _json_list(items: list[str]) -> str:
+    return json.dumps(items, ensure_ascii=False)
