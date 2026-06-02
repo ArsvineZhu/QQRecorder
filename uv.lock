@@ -874,7 +874,7 @@ wheels = [
 ]
 
 [[package]]
-name = "qqrecorder"
+name = "qqcontextbot"
 version = "1.5.1"
 source = { editable = "." }
 dependencies = [

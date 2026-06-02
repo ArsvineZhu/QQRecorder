@@ -24,8 +24,8 @@ class _BridgeStub:
 
 
 class _FakeAIAPI:
-    def __init__(self, tool_arguments: str):
-        self.tool_arguments = tool_arguments
+    def __init__(self, content: str):
+        self.content = content
         self.calls = []
 
     async def chat(self, messages, **kwargs):
@@ -34,14 +34,7 @@ class _FakeAIAPI:
             choices=[
                 SimpleNamespace(
                     message=SimpleNamespace(
-                        tool_calls=[
-                            SimpleNamespace(
-                                function=SimpleNamespace(
-                                    name="submit_topic_analysis",
-                                    arguments=self.tool_arguments,
-                                )
-                            )
-                        ]
+                        content=self.content,
                     )
                 )
             ]
@@ -166,7 +159,6 @@ def test_build_context_unescapes_text_and_collects_context_ids():
     assert "[12:30] 小明: 引用\n内容" in built.quoted_block
     assert "[12:30] 图图: [图片]" in built.recent_block
     assert "[12:30] 转发者: [合并转发]" in built.recent_block
-    assert built.max_reply_chars == 500
 
 
 def test_build_context_quote_forward_prefers_forward_summary_over_cq_code():
@@ -443,10 +435,8 @@ def test_build_context_topic_ai_selects_related_messages_and_forward_summary():
         )
     )
 
-    assert "tools" in api.ai.calls[0][1]
-    assert (
-        api.ai.calls[0][1]["tool_choice"]["function"]["name"] == "submit_topic_analysis"
-    )
+    assert "response_format" in api.ai.calls[0][1]
+    assert api.ai.calls[0][1]["response_format"] == {"type": "json_object"}
     assert built.variant == "group_topic_ai"
     assert built.topic_title == "硬盘选择"
     assert built.topic_confidence == 0.82

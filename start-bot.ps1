@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Starts the QQRecorder bot using uv and ncatbot.
+    Starts the QQContextBot project using uv and ncatbot.
 
 .DESCRIPTION
-    This script changes to the correct directory and starts the QQRecorder bot.
+    This script changes to the correct directory and starts QQContextBot.
     It includes error checking and follows PowerShell best practices.
 #>
 
@@ -37,7 +37,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 
 # Start the bot
 try {
-    Write-Host "Starting QQRecorder bot..." -ForegroundColor Green
+    Write-Host "Starting QQContextBot..." -ForegroundColor Green
     uv run ncatbot run
 }
 catch {

@@ -138,7 +138,7 @@ class MessageProcessor:
                 flattened = flatten_forward_nodes(nodes)
                 all_forwards.extend(flattened)
             except Exception as e:
-                self.logger.error("Forward parse failed for %s: %s", forward_id, e)
+                self.logger.warning("Forward parse failed for %s: %s", forward_id, e)
                 all_forwards.append(
                     {"forward_id": forward_id, "depth": 0, "content_summary": ""}
                 )

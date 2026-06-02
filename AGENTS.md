@@ -1,198 +1,132 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-05-11
-**Commit:** 9ef0952
+**Generated:** 2026-06-02
+**Commit:** 6c0fa0e
 **Branch:** master
-**Stats:** ~22 Python files, ~7,900 lines | 1 test file, ~6% coverage | Zero CI/CD
+**Stats:** 61 Python files | 5 test files | zero CI
 
 ## OVERVIEW
 
-Silent QQ message recorder built on NcatBot framework. Records group/private chat messages to SQLite with image download, forward parsing, sticker detection, app share parsing, and command-based querying. Python 3.12+, async throughout. Run exclusively via `uv run ncatbot run` as an NcatBot plugin.
+QQContextBot is a two-plugin NcatBot project for recording QQ context and generating
+controlled replies from that context. The `qq_recorder` plugin stores group/private
+messages to SQLite, downloads and deduplicates images, parses forwards, stickers, and
+app shares, and runs scheduled backups. The `qq_grok_reply` plugin reads the recorded
+data and generates guarded replies when explicit trigger rules match. Python 3.12+,
+async throughout.
+
+Public project name: `QQContextBot`
+Code package names: `qq_recorder`, `qq_grok_reply`
 
 ## STRUCTURE
 
 ```
-QQRecorder/
-├── config.yaml                # NcatBot framework config + plugin-specific config under plugin.plugin_configs.qq_recorder
-├── pyproject.toml             # Project metadata + dependencies (ncatbot5, sqlalchemy, aiosqlite, aiohttp)
-├── ruff.toml                  # Linting/formatting rules (88 chars, double-quote, E/W/F/B/I/C/UP)
-├── pyrightconfig.json         # Type checker config: targets plugins/ + scripts/, Python 3.12
-├── README.md                  # User-facing docs (N.B.: "项目结构" section is outdated, shows non-existent recorder/ prefix)
-├── plugins/qq_recorder/       # Core plugin code (see sub-AGENTS.md for details)
-├── scripts/                   # Standalone CLI tools (migration + DB inspection)
-│   ├── export_db.py           # 8 subcommands: summary, schema, search, stats, export…
-│   ├── fix_image_extensions.py # Migration: fix .jpg files that are actually GIF/PNG
-│   ├── fix_newline_escaping.py # Migration: fix raw newlines in DB
-│   ├── fix_image_duplicates.py # Migration: dedup images + add unique constraint
-│   ├── migrate_add_is_sticker.py  # Migration: add is_sticker/sticker_confidence columns
-│   └── backfill_sticker_flags.py  # Backfill: detect stickers in existing image records
-├── napcat/                    # Vendored NapCat protocol adapter (.bat/.exe/.dll/node_modules) — third-party, do NOT edit
-├── docs/                      # Vendored NcatBot framework documentation (VuePress project) — not project-specific
-├── .agents/skills/            # NcatBot framework AI agent skills — not project-specific
-└── data/qq_recorder/          # Runtime data: recorder.db + images/YYYY/MM/DD/
+QQContextBot/
+├── README.md
+├── AGENTS.md
+├── pyproject.toml
+├── config.yaml
+├── CHANGELOG.md
+├── devtools/
+│   └── README.md
+├── scripts/                   # Export, migration, and backup utilities
+├── plugins/
+│   ├── qq_recorder/           # Core recorder plugin
+│   └── qq_grok_reply/         # Contextual reply plugin
+├── start-bot.sh
+├── start-bot.ps1
+├── napcat/                    # Third-party protocol adapter, do not edit
+├── docs/                      # Vendored NcatBot documentation
+└── data/qq_recorder/          # Runtime DB + images + backups
 ```
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Plugin lifecycle + event registration | `plugins/qq_recorder/plugin.py` | QQRecorderPlugin (thin orchestrator, 77 lines) |
-| Add message handling logic | `plugins/qq_recorder/processors.py` | MessageProcessor: message/forward/image pipeline |
-| Add/modify command handlers | `plugins/qq_recorder/commands.py` | CommandHandler: stats/recent/search |
-| Change event conversion | `plugins/qq_recorder/events.py` | Pure functions: event_to_dict, is_command, format_stored_log |
-| Change what gets recorded | `plugins/qq_recorder/config.py` | RecorderSettings, is_chat_monitored |
-| Modify DB schema | `plugins/qq_recorder/models.py` | SQLAlchemy ORM: Message, Image, ForwardMessage, Reply, AtMention |
-| Async DB operations | `plugins/qq_recorder/storage.py` | MessageStorage: all SQLite read/write |
-| Parse message segments | `plugins/qq_recorder/message_parser.py` | parse_message → ParsedMessage (images, replies, forwards, ats) |
-| Fix image processing | `plugins/qq_recorder/image_handler.py` | Download, format detection, MD5-dedup storage |
-| Add/modify sticker detection | `plugins/qq_recorder/sticker_detector.py` | 3-layer cascade: metadata → text → heuristics |
-| Forward message parsing | `plugins/qq_recorder/forward_parser.py` | Recursive forward node parsing |
-| Text escaping/unescaping | `plugins/qq_recorder/text_utils.py` | Control char escape for DB storage |
-| Add/modify app share parsing | `plugins/qq_recorder/message_parser.py` | extract_app_shares() → AppShareInfo (JSON/app segments) |
-| App share DB schema | `plugins/qq_recorder/models.py` | AppShare: app_name, title, description, url, prompt, raw_data |
-| Adjust plugin config | Root `config.yaml` | `plugin.plugin_configs.qq_recorder` |
-| Inspect recorded data | `scripts/export_db.py` | 8 subcommands (summary, search, export…) |
-| Run data migrations | `scripts/fix_*.py`, `scripts/migrate_*.py`, `scripts/backfill_*.py` | All support `--dry-run` |
-| Test sticker detection | `plugins/qq_recorder/tests/test_sticker_detection.py` | 8 unit tests (only test file in project) |
-| NcatBot framework APIs | `docs/docs/notes/reference/` | Vendored framework reference docs |
-| Bot startup | `uv run ncatbot run` (from project root) | NcatBot loads plugin via manifest.toml |
+| Recorder plugin lifecycle + event registration | `plugins/qq_recorder/plugin.py` | `QQRecorderPlugin` orchestrator |
+| Recorder message pipeline | `plugins/qq_recorder/processors.py` | Message/forward/image/app-share flow |
+| Recorder commands | `plugins/qq_recorder/commands.py` | stats/recent/search |
+| Recorder event conversion | `plugins/qq_recorder/events.py` | `event_to_dict`, `is_command`, formatting |
+| Recorder config | `plugins/qq_recorder/config.py` | `RecorderSettings`, monitoring filters |
+| Recorder schema | `plugins/qq_recorder/models.py` | ORM tables for messages, images, forwards, replies, mentions, app shares |
+| Recorder storage | `plugins/qq_recorder/storage.py` | Async SQLite reads/writes |
+| Recorder parsing | `plugins/qq_recorder/message_parser.py` | images, replies, forwards, ats, app shares |
+| Recorder image handling | `plugins/qq_recorder/image_handler.py` | download, detect extension, save, dedup |
+| Recorder sticker detection | `plugins/qq_recorder/sticker_detector.py` | metadata + text + heuristic cascade |
+| Recorder forward parsing | `plugins/qq_recorder/forward_parser.py` | recursive forward node flattening |
+| Recorder backups | `plugins/qq_recorder/backup.py` | full/incremental archive and restore chains |
+| Reply plugin lifecycle | `plugins/qq_grok_reply/plugin.py` | guarded reply entry point |
+| Reply plugin context building | `plugins/qq_grok_reply/context_builder.py` | recorder DB to model context |
+| Reply plugin triggers | `plugins/qq_grok_reply/trigger.py` | private, group, prefix, and @ matching |
+| Reply plugin sending | `plugins/qq_grok_reply/sender.py` | response split / send helpers |
+| Reply plugin model access | `plugins/qq_grok_reply/model_client.py` | AI adapter integration |
+| Version history | `CHANGELOG.md` | release notes and manual version tracking |
+| Database inspection | `scripts/export_db.py` | summary, schema, search, stats, export |
+| Data migrations | `scripts/fix_*.py`, `scripts/migrate_*.py`, `scripts/backfill_*.py` | use `--dry-run` first |
+| Tests | `plugins/qq_recorder/tests/`, `plugins/qq_grok_reply/tests/` | recorder + reply coverage |
+| Bot startup | `uv run ncatbot run` | loads plugins through `manifest.toml` |
 
 ## CODE MAP
 
 | Symbol | Type | Location | Role |
 |--------|------|----------|------|
-| `QQRecorderPlugin` | class | `plugins/qq_recorder/plugin.py:14` | Plugin entry: lifecycle + 4 event handlers |
-| `MessageProcessor` | class | `plugins/qq_recorder/processors.py` | Message pipeline orchestrator |
-| `MessageStorage` | class | `plugins/qq_recorder/storage.py:15` | All async DB operations |
-| `CommandHandler` | class | `plugins/qq_recorder/commands.py` | stats/recent/search subcommands |
-| `parse_message()` | function | `plugins/qq_recorder/message_parser.py` | Segment parsing → ParsedMessage DTO |
-| `event_to_dict()` | function | `plugins/qq_recorder/events.py` | Event object → dict (manual field extraction) |
-| `combined_detection()` | function | `plugins/qq_recorder/sticker_detector.py` | 3-layer sticker confidence pipeline |
+| `QQRecorderPlugin` | class | `plugins/qq_recorder/plugin.py` | Recorder plugin entry |
+| `BackupManager` | class | `plugins/qq_recorder/backup.py` | Backup/restore scheduler and archive logic |
+| `MessageProcessor` | class | `plugins/qq_recorder/processors.py` | Recorder pipeline orchestrator |
+| `MessageStorage` | class | `plugins/qq_recorder/storage.py` | All async DB operations |
+| `CommandHandler` | class | `plugins/qq_recorder/commands.py` | stats/recent/search commands |
+| `parse_message()` | function | `plugins/qq_recorder/message_parser.py` | Segment parsing to DTOs |
+| `event_to_dict()` | function | `plugins/qq_recorder/events.py` | Event object to plain dict |
+| `combined_detection()` | function | `plugins/qq_recorder/sticker_detector.py` | Sticker confidence pipeline |
 | `process_images()` | function | `plugins/qq_recorder/image_handler.py` | Download + format detect + save |
-| `detect_extension()` | function | `plugins/qq_recorder/image_handler.py` | 3-layer cascade → file extension |
-| `build_config()` | function | `plugins/qq_recorder/config.py` | Config defaults + validation |
-| `parse_forward_response()` | function | `plugins/qq_recorder/forward_parser.py` | Recursive forward node parsing |
-| `extract_app_shares()` | function | `plugins/qq_recorder/message_parser.py` | JSON segment → AppShareInfo (Bilibili, music, maps, etc.) |
+| `detect_extension()` | function | `plugins/qq_recorder/image_handler.py` | URL/content-type/magic-byte cascade |
+| `build_config()` | function | `plugins/qq_recorder/config.py` | Config defaults and validation |
+| `parse_forward_response()` | function | `plugins/qq_recorder/forward_parser.py` | Recursive forward parsing |
+| `extract_app_shares()` | function | `plugins/qq_recorder/message_parser.py` | JSON segment parsing |
+| `QQGrokReplyPlugin` | class | `plugins/qq_grok_reply/plugin.py` | Reply plugin entry |
+| `build_context()` | function | `plugins/qq_grok_reply/context_builder.py` | Recorded data to context assembly |
 
 ## CONVENTIONS
 
-- **Async everywhere**: All I/O is async (aiohttp, aiosqlite). Blocking ops use `asyncio.to_thread()`.
-- **Dataclasses for DTOs**: `@dataclass` for config and transfer objects, not Pydantic.
-- **Error isolation**: Message processing catches exceptions per-message; one failure doesn't break the plugin.
-- **Image format detection**: 3-layer cascade — URL extension → Content-Type header → magic bytes → fallback `.jpg`. Never skip a layer.
-- **Type hints**: Full type annotations, modern syntax (`list[str]` not `List[str]`, Python 3.12+).
-- **Constants**: `ALL_CAPS` for module-level constants, `_leading_underscore` for private helpers.
-- **Linting**: Ruff — rules E, W, F, B, I, C, UP; line length 88; 4-space indent; double quotes.
-- **Type checking**: Pyright targeting `plugins/` + `scripts/` (Python 3.12). Excludes `napcat/`, `.venv/`.
-- **Package manager**: `uv` (`uv sync`, `uv run`). lockfile committed.
-- **No build system**: No `[build-system]` in pyproject.toml. Not pip-installable or PyPI-published. Plugin-only runtime.
-- **No console_scripts**: Entry exclusively via `uv run ncatbot run`. Plugin loaded dynamically by NcatBot.
-- **Plugin entry**: `manifest.toml` → `main = "plugin.py"` → `entry_class = "QQRecorderPlugin"`. No separate `main.py`.
-- **Image storage**: `data/qq_recorder/data/images/YYYY/MM/DD/<md5hash>.<ext>`. Content MD5 dedup.
-- **CLI script convention**: All scripts use `argparse` + `--dry-run` flag + `if __name__ == "__main__"` guard.
-- **Sticker detection**: Invoked inside `extract_images()` in message_parser.py — no separate pipeline step. Confidence ≥ 0.7 → sticker.
-- **Config is single-file**: Root `config.yaml` holds both NcatBot framework config and plugin config under `plugin.plugin_configs.qq_recorder`.
-- **Pre-commit hooks**: `.pre-commit-config.yaml` runs `ruff check` + `ruff format --check` on `git commit`. Run `pre-commit install` once after clone.
-- **App share parsing**: `extract_app_shares()` in message_parser.py handles JSON segments — parses QQ mini-program, rich media, location shares. HTML entities (`&#44;`) are decoded via `html.unescape()`.
+- **Async everywhere**: All network and database I/O is async. Blocking filesystem work should go through `asyncio.to_thread()`.
+- **Dataclasses for DTOs**: Use `@dataclass` for config and transfer objects, not Pydantic.
+- **Project name vs package names**: The public project is `QQContextBot`; code packages remain `qq_recorder` and `qq_grok_reply` unless a migration is explicitly planned.
+- **Config layout**: Root `config.yaml` is NcatBot runtime config. Plugin runtime configs live in `plugins/qq_recorder/config.yaml` and `plugins/qq_grok_reply/config.yaml`.
+- **Image detection**: Keep the 3-layer cascade: URL extension -> Content-Type -> magic bytes -> fallback `.jpg`.
+- **Deduplication**: Use content MD5, not `file_unique`.
+- **Plugin entry**: `manifest.toml` -> `plugin.py` -> `entry_class`. No separate `main.py`.
+- **Versioning**: Keep `pyproject.toml`, plugin manifest version, plugin class version, and `CHANGELOG.md` aligned.
+- **Build backend**: `pyproject.toml` includes a setuptools build backend for metadata/editable installs. Runtime entry is still `uv run ncatbot run`.
+- **Third-party code**: Do not edit `napcat/`.
+- **Docs scope**: `docs/` is vendored NcatBot documentation, not QQContextBot-specific content.
 
-## ANTI-PATTERNS (THIS PROJECT)
+## ANTI-PATTERNS
 
-- **NEVER** suppress type errors with `as any` / `# type: ignore` (note: legacy `# pyright: ignore[...]` exists in storage.py, image_handler.py — refactor out, do not add more)
-- **NEVER** use empty `except` blocks — always log or handle
-- **NEVER** save all images as `.jpg` — must detect actual format (GIF/PNG/WebP/BMP)
-- **NEVER** block the event loop with sync I/O — use `asyncio.to_thread()`
-- **NEVER** modify `napcat/` — it's a third-party protocol adapter
-- **NEVER** hardcode `.jpg` as image extension — always use `detect_extension()` cascade
-- **NEVER** access `self.api` before `on_load()` completes — API available only after plugin init
-- **NEVER** modify event objects in-place — convert to dict via `event_to_dict()` first
-- **NEVER** rely on `is_sticker`/`stickerId` fields — use `sub_type` in segment_data (0=image, 1=sticker, 7=shop, 13=emoji)
-- **NEVER** use `file_unique` for image dedup — it's always `"0"` from QQ. Use MD5 hash of content.
-- **NEVER** add sync I/O in the message processing path — all blocking calls must go through `asyncio.to_thread()`
+- **NEVER** suppress type errors with `# type: ignore` in new code.
+- **NEVER** use empty `except` blocks.
+- **NEVER** save all images as `.jpg`.
+- **NEVER** block the event loop with sync I/O in the message path.
+- **NEVER** modify NcatBot event objects in-place; convert with `event_to_dict()` first.
+- **NEVER** rely on `file_unique` for image deduplication.
+- **NEVER** rely on `is_sticker` / `stickerId` alone; use `segment_data["sub_type"]`.
 
 ## COMMANDS
 
 ```bash
-# ---- Setup ----
-uv sync                                    # Install all dependencies
-uv run ncatbot run                         # Start the bot
-
-# ---- Quality ----
-uv run ruff check .                        # Lint check
-uv run ruff format . --diff                # Format check (dry-run)
-uv run ruff format .                       # Auto-format
-uv run pyright                             # Type check
-uv run pytest plugins/qq_recorder/tests/   # Run tests (only sticker_detector)
-
-# ---- Database inspection ----
-python scripts/export_db.py summary        # Overview: row counts, time range, type stats
-python scripts/export_db.py schema         # Table schema: columns, types, constraints, indexes
-python scripts/export_db.py search "关键词" # Search message content (max 10 results)
-python scripts/export_db.py messages --chat group --id 1072706649  # Messages filtered by type/ID
-python scripts/export_db.py images --downloaded                      # Downloaded images
-python scripts/export_db.py images --missing                         # Missing images
-python scripts/export_db.py stats                                    # Per-chat stats
-python scripts/export_db.py export -o backup.json                    # Full DB export (JSON)
-python scripts/export_db.py export --format csv -o backup.csv        # Full DB export (CSV)
-
-# ---- Migration scripts (always --dry-run first!) ----
-python scripts/fix_image_extensions.py --dry-run
-python scripts/fix_newline_escaping.py --dry-run
-python scripts/fix_image_duplicates.py --dry-run
-python scripts/migrate_add_is_sticker.py --dry-run
-python scripts/migrate_add_app_share.py --dry-run
-python scripts/backfill_sticker_flags.py --dry-run
-python scripts/backfill_sticker_flags.py --start-id 100 --end-id 200  # Batch backfill
+uv sync
+uv run ncatbot run
+uv run ruff check .
+uv run ruff format . --diff
+uv run pyright
+uv run pytest plugins/qq_recorder/tests/ plugins/qq_grok_reply/tests/
+python scripts/export_db.py summary
+python scripts/backup_tool.py list --dir data/qq_recorder/data/backups
 ```
 
 ## NOTES
 
-- Single config file: root `config.yaml` contains both NcatBot framework configuration **and** plugin-specific configuration under `plugin.plugin_configs.qq_recorder`. No secondary `recorder/config.yaml` exists — README references an outdated structure.
-- Images stored by date: `data/qq_recorder/data/images/YYYY/MM/DD/<md5hash>.<ext>`. Filename is content MD5 (auto-dedup).
-- `file_unique` field in images table is always `"0"` — QQ doesn't provide it. MD5 hash is used for dedup. Use `file_url` for querying.
-- DB path in config is relative to plugin workspace (`data/qq_recorder/`), not project root.
-- `ruff` is listed as a RUNTIME dependency in `pyproject.toml` (not dev-only) — this is non-standard. If refactoring, consider moving to `[dependency-groups].dev`.
-- NapCat directory contains login scripts and protocol binaries — don't edit unless upgrading NapCat.
-- `docs/` is a vendored copy of the NcatBot framework documentation site (VuePress). Not QQRecorder-specific docs. Gitignored.
-- `.agents/skills/` are NcatBot framework AI agent instructions. Not QQRecorder-specific. Load them for framework-related dev questions.
-- Tests: only `test_sticker_detection.py` exists (8 tests, ~6% coverage). No conftest.py, fixtures, or mocks. No CI enforcement.
-- `# pyright: ignore[reportOptionalCall]` exists in legacy code (storage.py, image_handler.py, processors.py). Do not add more.
-- `ForwardMessage` is self-referential (`parent_forward_id` FK → self) — tree stored as adjacency list.
-- Forward IDs from parsed messages may be empty/whitespace — always filter before calling API.
-
----
-
-## NcatBot AI Agent Reference
-
-This project is built on the NcatBot framework. All framework-level development questions should refer to the following documentation:
-
-### Directory Overview
-
-| Path | Description |
-|------|-------------|
-| `.agents/skills/` | AI Agent skill files, pre-loaded for your use |
-| `docs/docs/examples/` | Example code (qq / github / cross_platform / common …) |
-| `docs/docs/notes/guide/` | Getting started to advanced usage guides |
-| `docs/docs/notes/reference/` | API reference documentation for all modules |
-
-### Core Skills
-
-| Skill | Path | Purpose |
-|-------|------|---------|
-| framework-usage | `.agents/skills/framework-usage/SKILL.md` | Developing bots with NcatBot: plugin registration, event handling, message sending, CLI debugging |
-| testing-framework | `.agents/skills/testing-framework/SKILL.md` | Writing and running plugin tests |
-| plugin-migration | `.agents/skills/plugin-migration/SKILL.md` | Migrating 4.x plugins to 5.0 |
-| code-nav | `.agents/skills/code-nav/SKILL.md` | Locating code implementations in this project |
-| codebase-nav | `.agents/skills/codebase-nav/SKILL.md` | Navigating this project's codebase to understand structure |
-
-> **AI Agent Note**: When encountering NcatBot framework-related development questions, always invoke the corresponding skill first to get complete instructions — don't develop from memory.
-
-### Key Documentation Entries
-
-- `docs/docs/notes/guide/README.md` — Guide index (quick start, plugin development, message sending...)
-- `docs/docs/notes/reference/README.md` — API reference index (lookup classes/methods by purpose)
-- `docs/docs/examples/README.md` — Example index (sorted by platform and difficulty)
-
-### External Links
-
-- Documentation: <https://docs.ncatbot.top>
-- GitHub: <https://github.com/ncatbot/NcatBot>
+- `data/qq_recorder/` is the plugin runtime workspace. Paths inside recorder config are relative to that workspace, not the project root.
+- `qq_grok_reply.recorder_db` must point at the actual recorder database file via absolute path.
+- `qq_recorder` currently uses `QQRecorderPlugin` as its entry class for compatibility.
+- Root `config.yaml` may contain secrets in local environments; do not commit credentials.
+- Use the plugin-level `AGENTS.md` files when editing one plugin in isolation.

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Start QQRecorder bot
+# Start QQContextBot
 # Usage: ./start-bot.sh
 
 # Exit on error
@@ -29,5 +29,5 @@ if ! command -v uv &> /dev/null; then
 fi
 
 # Start the bot
-echo -e "\033[32mStarting QQRecorder bot...\033[0m"
+echo -e "\033[32mStarting QQContextBot...\033[0m"
 uv run ncatbot run

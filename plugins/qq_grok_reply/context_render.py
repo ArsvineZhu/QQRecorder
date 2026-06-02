@@ -252,17 +252,6 @@ def coerce_datetime(timestamp) -> datetime:
     return datetime.fromtimestamp(0)
 
 
-def prompt_char_limit(settings: ReplyPluginSettings, is_group: bool) -> int:
-    if is_group:
-        return min(
-            500, settings.send.group_max_chars_per_part * settings.send.group_max_parts
-        )
-    return min(
-        1200,
-        settings.send.private_max_chars_per_part * settings.send.private_max_parts,
-    )
-
-
 def first_reply_id(message) -> str | None:
     replies = getattr(message, "replies", [])
     if not replies:

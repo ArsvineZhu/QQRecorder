@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import time
 from typing import Any, cast
@@ -33,7 +34,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
     name = "qq_grok_reply"
     version = "0.1.0"
     author = "Arsvine Zhu"
-    description = "基于 QQRecorder 的受控 AI 回复插件"
+    description = "基于 QQContextBot 的受控 AI 回复插件"
 
     def __init__(self):
         super().__init__()
@@ -49,6 +50,8 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             return
         if not os.path.isabs(self.settings.recorder_db):
             raise ValueError("qq_grok_reply.recorder_db must be an absolute path")
+
+        logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
         self._bridge = RecorderBridge()
         await self._bridge.connect_existing(self.settings.recorder_db)
@@ -285,7 +288,6 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             message_id=event_message_id,
             trigger_reason=decision_reason,
             model_name=meta["model_name"],
-            request_messages=meta.get("request_messages", []),
             response_text=meta.get("response_text", reply_text),
             request_summary=meta["model_request_summary"],
             response_summary=meta["model_response_summary"],
