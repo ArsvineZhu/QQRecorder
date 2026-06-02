@@ -122,6 +122,7 @@ def build_config(raw: dict) -> ReplyPluginSettings:
             enabled=trace_data.get("enabled", True),
             preview_chars=trace_data.get("preview_chars", 240),
             log_runtime=trace_data.get("log_runtime", True),
+            log_context_blocks=trace_data.get("log_context_blocks", False),
             log_chars=trace_data.get("log_chars", 4000),
         ),
         lock_retry=LockRetryConfig(

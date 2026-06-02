@@ -223,9 +223,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             topic_candidate_count=ctx.topic_candidate_count,
             topic_error_code=ctx.topic_error_code,
             topic_fallback_used=ctx.topic_fallback_used,
-            current_block=ctx.current_block,
-            quoted_block=ctx.quoted_block,
-            recent_block=ctx.recent_block,
+            **self._context_log_payload(ctx),
         )
         trace_id = None
         if self.settings.trace.enabled:
@@ -395,3 +393,17 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             stage,
             json_payload(payload, self.settings.trace.log_chars),
         )
+
+    def _context_log_payload(self, ctx) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "current_block_chars": len(ctx.current_block),
+            "quoted_block_chars": len(ctx.quoted_block),
+            "recent_block_chars": len(ctx.recent_block),
+        }
+        if self.settings.trace.log_context_blocks:
+            payload.update(
+                current_block=ctx.current_block,
+                quoted_block=ctx.quoted_block,
+                recent_block=ctx.recent_block,
+            )
+        return payload
