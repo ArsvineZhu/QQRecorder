@@ -33,9 +33,11 @@ async def send_reply(api, event, text: str, settings) -> SendOutcome:
                 event, part, settings, is_group=is_group, is_first=index == 0
             )
             if is_group:
-                result = await api.qq.send_group_msg(str(event.group_id), payload)
+                result = await api.qq.post_group_array_msg(str(event.group_id), payload)
             else:
-                result = await api.qq.send_private_msg(str(event.user_id), payload)
+                result = await api.qq.post_private_array_msg(
+                    str(event.user_id), payload
+                )
             sent_parts += 1
             if sent_message_id is None:
                 sent_message_id = str(getattr(result, "message_id", "") or "") or None
@@ -62,4 +64,4 @@ def _build_payload(event, text: str, settings, *, is_group: bool, is_first: bool
     if is_group and is_first and settings.send.group_at_sender:
         msg.add_at(str(event.user_id))
     msg.add_text(text)
-    return msg.to_list()
+    return msg

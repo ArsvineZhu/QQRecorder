@@ -195,16 +195,12 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             return SendOutcome(False, None, 0, None)
 
         try:
-            msg = (
-                MessageArray()
-                .add_text("我这边暂时没拿到模型结果，稍后再试一次。")
-                .to_list()
-            )
+            msg = MessageArray().add_text("我这边暂时没拿到模型结果，稍后再试一次。")
             qq_api = cast(Any, self.api.qq)
             if is_group:
-                result = await qq_api.send_group_msg(str(event.group_id), msg)
+                result = await qq_api.post_group_array_msg(str(event.group_id), msg)
             else:
-                result = await qq_api.send_private_msg(str(event.user_id), msg)
+                result = await qq_api.post_private_array_msg(str(event.user_id), msg)
             return SendOutcome(
                 True,
                 str(getattr(result, "message_id", "") or "") or None,

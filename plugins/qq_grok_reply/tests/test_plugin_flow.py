@@ -71,11 +71,11 @@ class _FakeQQAPI:
         self.group_calls = []
         self.private_calls = []
 
-    async def send_group_msg(self, group_id: str, message):
+    async def post_group_array_msg(self, group_id: str, message):
         self.group_calls.append((group_id, message))
         return SimpleNamespace(message_id="fallback-group-1")
 
-    async def send_private_msg(self, user_id: str, message):
+    async def post_private_array_msg(self, user_id: str, message):
         self.private_calls.append((user_id, message))
         return SimpleNamespace(message_id="fallback-1")
 

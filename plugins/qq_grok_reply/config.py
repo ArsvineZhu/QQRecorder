@@ -22,8 +22,8 @@ class TriggerConfig:
 
 @dataclass
 class ReadAfterWriteConfig:
-    timeout_ms: int = 320
-    backoff_ms: list[int] = field(default_factory=lambda: [20, 40, 80, 160])
+    timeout_ms: int = 2000
+    backoff_ms: list[int] = field(default_factory=lambda: [50, 100, 200, 400, 800])
 
 
 @dataclass

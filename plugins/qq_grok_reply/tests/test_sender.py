@@ -11,13 +11,13 @@ class _FakeQQAPI:
         self.group_calls = []
         self.private_calls = []
 
-    async def send_group_msg(self, group_id: str, message):
+    async def post_group_array_msg(self, group_id: str, message):
         self.group_calls.append((group_id, message))
         if self.fail_after is not None and len(self.group_calls) > self.fail_after:
             raise RuntimeError("send failed")
         return SimpleNamespace(message_id=f"group-{len(self.group_calls)}")
 
-    async def send_private_msg(self, user_id: str, message):
+    async def post_private_array_msg(self, user_id: str, message):
         self.private_calls.append((user_id, message))
         if self.fail_after is not None and len(self.private_calls) > self.fail_after:
             raise RuntimeError("send failed")
@@ -52,7 +52,7 @@ def test_send_reply_splits_group_text_and_records_first_message_id():
     assert outcome.sent_message_id == "group-1"
     assert outcome.sent_parts == 2
     first_payload = api.qq.group_calls[0][1]
-    assert first_payload[0]["type"] == "reply"
+    assert first_payload.to_list()[0]["type"] == "reply"
 
 
 def test_send_reply_reports_partial_send_error():
