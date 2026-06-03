@@ -88,6 +88,7 @@ trace:
   log_runtime: true
   log_context_blocks: false
   log_chars: 4000
+  pretty_print: false
 
 lock_retry:
   enabled: true

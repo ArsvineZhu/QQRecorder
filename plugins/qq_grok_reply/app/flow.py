@@ -13,6 +13,7 @@ from ..shared import (
     chat_identity,
     json_list,
     json_payload,
+    normalize_log_value,
     resolve_awaitable,
     sender_name,
 )
@@ -459,7 +460,11 @@ class PluginFlow:
 
     async def _send_failure_fallback(self, event, decision_reason: str) -> SendOutcome:
         is_group = getattr(event, "group_id", None) is not None
-        should_send = not is_group or decision_reason.startswith("prefix:")
+        should_send = (
+            not is_group
+            or decision_reason.startswith("prefix:")
+            or decision_reason in ("group_at_bot", "reply_to_bot")
+        )
         if not should_send:
             return SendOutcome(False, None, 0, None)
 
@@ -487,11 +492,23 @@ class PluginFlow:
     def _log_runtime(self, stage: str, **payload) -> None:
         if not self.settings.trace.log_runtime:
             return
-        self.logger.info(
-            "qq_grok_reply %s | %s",
-            stage,
-            json_payload(payload, self.settings.trace.log_chars),
-        )
+        if self.settings.trace.pretty_print:
+            import pprint
+
+            normalized = {
+                key: normalize_log_value(value, self.settings.trace.log_chars)
+                for key, value in payload.items()
+            }
+            formatted = pprint.pformat(
+                normalized, indent=2, sort_dicts=False, width=120
+            )
+            self.logger.info("qq_grok_reply %s |\n%s", stage, formatted)
+        else:
+            self.logger.info(
+                "qq_grok_reply %s | %s",
+                stage,
+                json_payload(payload, self.settings.trace.log_chars),
+            )
 
     def _context_log_payload(self, ctx) -> dict[str, Any]:
         payload: dict[str, Any] = {

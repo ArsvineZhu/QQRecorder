@@ -105,6 +105,7 @@ class TraceConfig:
     log_runtime: bool = True
     log_context_blocks: bool = False
     log_chars: int = 4000
+    pretty_print: bool = False
 
 
 @dataclass

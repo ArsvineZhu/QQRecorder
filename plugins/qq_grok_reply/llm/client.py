@@ -57,65 +57,60 @@ async def generate_reply(
     preview_chars = settings.trace.preview_chars
     last_error: Exception | None = None
 
-    try:
-        async with asyncio.timeout(settings.model.timeout_sec):
-            for _attempt in range(retries + 1):
-                try:
-                    response = await _call_chat(
-                        api,
-                        messages,
-                        model=settings.model.model or None,
-                        temperature=settings.model.temperature,
-                        max_tokens=max_tokens,
-                        allow_more_context=allow_more_context,
-                    )
-                    request_reason = (
-                        _extract_more_context_request(response)
-                        if allow_more_context
-                        else None
-                    )
-                    if request_reason:
-                        return ReplyGenerationResult(
-                            text="",
-                            requested_more_context=True,
-                            request_reason=request_reason,
-                            model_name=str(
-                                getattr(response, "model", None)
-                                or settings.model.model
-                                or ""
-                            ),
-                            model_request_summary=_summarize(
-                                messages[-1]["content"], preview_chars
-                            ),
-                            model_response_summary=_summarize(
-                                f"[request_more_context] {request_reason}",
-                                preview_chars,
-                            ),
-                        )
-                    text = _extract_text(response).strip()
-                    if not text:
-                        raise ReplyModelError(
-                            "empty_response", "model returned empty content"
-                        )
-                    return ReplyGenerationResult(
-                        text=text,
-                        model_name=str(
-                            getattr(response, "model", None)
-                            or settings.model.model
-                            or ""
-                        ),
-                        model_request_summary=_summarize(
-                            messages[-1]["content"], preview_chars
-                        ),
-                        model_response_summary=_summarize(text, preview_chars),
-                    )
-                except ReplyModelError:
-                    raise
-                except Exception as exc:
-                    last_error = exc
-            raise ReplyModelError("llm_error", str(last_error or "unknown model error"))
-    except TimeoutError as exc:
-        raise ReplyModelError("llm_timeout", "model request timed out") from exc
+    for _attempt in range(retries + 1):
+        try:
+            async with asyncio.timeout(settings.model.timeout_sec):
+                response = await _call_chat(
+                    api,
+                    messages,
+                    model=settings.model.model or None,
+                    temperature=settings.model.temperature,
+                    max_tokens=max_tokens,
+                    allow_more_context=allow_more_context,
+                )
+            request_reason = (
+                _extract_more_context_request(response) if allow_more_context else None
+            )
+            if request_reason:
+                return ReplyGenerationResult(
+                    text="",
+                    requested_more_context=True,
+                    request_reason=request_reason,
+                    model_name=str(
+                        getattr(response, "model", None) or settings.model.model or ""
+                    ),
+                    model_request_summary=_summarize(
+                        messages[-1]["content"], preview_chars
+                    ),
+                    model_response_summary=_summarize(
+                        f"[request_more_context] {request_reason}",
+                        preview_chars,
+                    ),
+                )
+            text = _extract_text(response).strip()
+            if not text:
+                finish_reason = _safe_finish_reason(response)
+                raise ReplyModelError(
+                    "empty_response",
+                    f"model returned empty content (finish_reason={finish_reason})",
+                )
+            return ReplyGenerationResult(
+                text=text,
+                model_name=str(
+                    getattr(response, "model", None) or settings.model.model or ""
+                ),
+                model_request_summary=_summarize(
+                    messages[-1]["content"], preview_chars
+                ),
+                model_response_summary=_summarize(text, preview_chars),
+            )
+        except ReplyModelError:
+            raise
+        except TimeoutError as exc:
+            raise ReplyModelError("llm_timeout", "model request timed out") from exc
+        except Exception as exc:
+            last_error = exc
+    raise ReplyModelError("llm_error", str(last_error or "unknown model error"))
 
 
 async def _call_chat(
@@ -183,14 +178,33 @@ def _extract_text(response) -> str:
     choices = getattr(response, "choices", None) or []
     if choices:
         first = choices[0]
+        finish_reason = getattr(first, "finish_reason", None)
         message = getattr(first, "message", None)
-        if message is not None and getattr(message, "content", None):
-            return str(message.content)
+        if message is not None:
+            content = getattr(message, "content", None)
+            if content is not None:
+                return str(content)
+            if finish_reason == "content_filter":
+                raise ReplyModelError(
+                    "content_filtered",
+                    "model response was filtered by content safety policy",
+                )
         if getattr(first, "text", None):
             return str(first.text)
     if getattr(response, "content", None):
         return str(response.content)
     return ""
+
+
+def _safe_finish_reason(response) -> str:
+    """Safely extract finish_reason from a model response for diagnostic logging."""
+    try:
+        choices = getattr(response, "choices", None) or []
+        if choices:
+            return str(getattr(choices[0], "finish_reason", "unknown") or "null")
+    except Exception:
+        pass
+    return "unknown"
 
 
 def _summarize(text: str, limit: int) -> str:
