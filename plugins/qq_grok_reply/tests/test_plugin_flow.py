@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from plugins.qq_grok_reply.config import build_config
 from plugins.qq_grok_reply.context_builder import BuiltContext, TopicContextError
-from plugins.qq_grok_reply.model_client import ReplyModelError
+from plugins.qq_grok_reply.model_client import ReplyGenerationResult, ReplyModelError
 from plugins.qq_grok_reply.plugin import QQGrokReplyPlugin
 from plugins.qq_grok_reply.sender import SendOutcome
 from plugins.qq_grok_reply.topic_analyzer import TopicAnalysis
@@ -65,6 +65,7 @@ class _FakeBridge:
 class _FakeTraceStore:
     def __init__(self, sent_message_ids: set[str] | None = None):
         self.inserted = []
+        self.updated = []
         self.finished = []
         self.sent_message_ids = sent_message_ids or set()
 
@@ -77,6 +78,9 @@ class _FakeTraceStore:
     async def insert_trace(self, **kwargs):
         self.inserted.append(kwargs)
         return len(self.inserted)
+
+    async def update_trace_context(self, trace_id: int, **kwargs):
+        self.updated.append((trace_id, kwargs))
 
     async def finish_trace(self, trace_id: int, **kwargs):
         self.finished.append((trace_id, kwargs))
@@ -161,13 +165,11 @@ def test_plugin_handle_success_updates_trace(tmp_path: Path, monkeypatch, caplog
     )
     monkeypatch.setattr(
         "plugins.qq_grok_reply.plugin.generate_reply",
-        lambda *_args, **_kwargs: (
-            "收到",
-            {
-                "model_name": "demo",
-                "model_request_summary": "req",
-                "model_response_summary": "resp",
-            },
+        lambda *_args, **_kwargs: ReplyGenerationResult(
+            text="收到",
+            model_name="demo",
+            model_request_summary="req",
+            model_response_summary="resp",
         ),
     )
     monkeypatch.setattr(
@@ -289,13 +291,11 @@ def test_plugin_handle_reply_to_bot_reaches_final_decision(tmp_path: Path, monke
     )
     monkeypatch.setattr(
         "plugins.qq_grok_reply.plugin.generate_reply",
-        lambda *_args, **_kwargs: (
-            "继续",
-            {
-                "model_name": "demo",
-                "model_request_summary": "req",
-                "model_response_summary": "resp",
-            },
+        lambda *_args, **_kwargs: ReplyGenerationResult(
+            text="继续",
+            model_name="demo",
+            model_request_summary="req",
+            model_response_summary="resp",
         ),
     )
     monkeypatch.setattr(
@@ -404,7 +404,7 @@ def test_plugin_handle_group_prefix_timeout_sends_fallback(tmp_path: Path, monke
     assert trace_store.finished[0][1]["error_code"] == "llm_timeout"
 
 
-def test_plugin_handle_topic_context_error_records_trace_without_reply(
+def test_plugin_handle_escalates_to_expanded_context_and_replies(
     tmp_path: Path, monkeypatch
 ):
     settings = build_config(
@@ -429,29 +429,156 @@ def test_plugin_handle_topic_context_error_records_trace_without_reply(
         settings, tmp_path, _FakeBridge(source_msg), _FakeTraceStore()
     )
     event = _FakeEvent(chat_type="group", raw_message="/ask 你好", group_id="30001")
-
-    def _raise_topic_error(*_args, **_kwargs):
-        raise TopicContextError(
-            TopicAnalysis(
-                topic_title="",
-                topic_summary="",
-                selected_message_ids=["evt-1"],
-                candidate_count=3,
-                confidence=0.1,
-                error_code="topic_low_confidence",
-            )
-        )
+    calls = {"generate": 0, "expand": 0}
 
     monkeypatch.setattr(
-        "plugins.qq_grok_reply.plugin.build_context", _raise_topic_error
+        "plugins.qq_grok_reply.plugin.build_context",
+        lambda *_args, **_kwargs: BuiltContext(
+            context_ids=["evt-1", "local-1"],
+            quoted_block="",
+            recent_block="[12:29] A: 本地上下文",
+            current_block="你好",
+            variant="group_topic_local",
+            chat_type="group",
+        ),
+    )
+
+    async def _expand_context(*_args, **_kwargs):
+        calls["expand"] += 1
+        return BuiltContext(
+            context_ids=["evt-1", "local-1", "topic-1"],
+            quoted_block="",
+            recent_block="[12:29] A: 本地上下文\n[12:28] B: 扩展话题",
+            current_block="你好",
+            variant="group_topic_expanded",
+            chat_type="group",
+            topic_title="扩展话题",
+            topic_summary="补齐了大范围上下文",
+            topic_confidence=0.8,
+            topic_candidate_count=12,
+        )
+
+    monkeypatch.setattr("plugins.qq_grok_reply.plugin.expand_context", _expand_context)
+
+    async def _generate_reply(*_args, **_kwargs):
+        calls["generate"] += 1
+        if calls["generate"] == 1:
+            return ReplyGenerationResult(
+                text="",
+                requested_more_context=True,
+                request_reason="需要更多上下文",
+                model_name="demo",
+                model_request_summary="req-1",
+                model_response_summary="",
+            )
+        return ReplyGenerationResult(
+            text="这是最终回复",
+            model_name="demo",
+            model_request_summary="req-2",
+            model_response_summary="resp-2",
+        )
+
+    monkeypatch.setattr("plugins.qq_grok_reply.plugin.generate_reply", _generate_reply)
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.plugin.send_reply",
+        lambda *_args, **_kwargs: SendOutcome(True, "bot-msg-9", 1, None),
     )
 
     asyncio.run(plugin._handle(event, "group"))
 
-    qq_api = cast(_FakeQQAPI, plugin.api.qq)
     trace_store = cast(_FakeTraceStore, plugin._trace_store)
-    assert qq_api.group_calls == []
-    assert trace_store.finished == []
-    assert trace_store.inserted[0]["decision"] == "error"
-    assert trace_store.inserted[0]["topic_error_code"] == "topic_low_confidence"
-    assert trace_store.inserted[0]["topic_fallback_used"] is False
+    assert calls == {"generate": 2, "expand": 1}
+    assert trace_store.inserted[0]["prompt_variant"] == "group_topic_local"
+    assert trace_store.updated[0][1]["prompt_variant"] == "group_topic_expanded"
+    assert trace_store.finished[0][1]["decision"] == "replied"
+    assert trace_store.finished[0][1]["sent_message_id"] == "bot-msg-9"
+
+
+def test_plugin_handle_expand_context_failure_still_replies_from_local_context(
+    tmp_path: Path, monkeypatch
+):
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "monitor_all": False,
+            "targets": {"groups": ["30001"]},
+            "cooldown": {"group_chat_sec": 0, "group_user_sec": 0},
+        }
+    )
+    source_msg = SimpleNamespace(
+        id=11,
+        message_id="evt-1",
+        chat_type="group",
+        group_id="30001",
+        user_id="20001",
+        replies=[],
+    )
+    plugin = _make_plugin(
+        settings, tmp_path, _FakeBridge(source_msg), _FakeTraceStore()
+    )
+    event = _FakeEvent(chat_type="group", raw_message="/ask 你好", group_id="30001")
+    calls = {"generate": 0}
+
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.plugin.build_context",
+        lambda *_args, **_kwargs: BuiltContext(
+            context_ids=["evt-1", "local-1"],
+            quoted_block="",
+            recent_block="[12:29] A: 本地上下文",
+            current_block="你好",
+            variant="group_topic_local",
+            chat_type="group",
+        ),
+    )
+
+    def _raise_topic_error(*_args, **_kwargs):
+        raise TopicContextError(
+            TopicAnalysis(
+                selected_message_ids=["evt-1"],
+                candidate_count=3,
+                confidence=0.1,
+                error_code="topic_invalid_tool_arguments",
+            )
+        )
+
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.plugin.expand_context", _raise_topic_error
+    )
+
+    async def _generate_reply(*_args, **_kwargs):
+        calls["generate"] += 1
+        if calls["generate"] == 1:
+            return ReplyGenerationResult(
+                text="",
+                requested_more_context=True,
+                request_reason="需要更多上下文",
+                model_name="demo",
+                model_request_summary="req-1",
+                model_response_summary="",
+            )
+        return ReplyGenerationResult(
+            text="先按现有上下文回答",
+            model_name="demo",
+            model_request_summary="req-2",
+            model_response_summary="resp-2",
+        )
+
+    monkeypatch.setattr("plugins.qq_grok_reply.plugin.generate_reply", _generate_reply)
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.plugin.send_reply",
+        lambda *_args, **_kwargs: SendOutcome(True, "bot-msg-10", 1, None),
+    )
+
+    asyncio.run(plugin._handle(event, "group"))
+
+    trace_store = cast(_FakeTraceStore, plugin._trace_store)
+    assert calls["generate"] == 2
+    assert (
+        trace_store.updated[0][1]["topic_error_code"] == "topic_invalid_tool_arguments"
+    )
+    assert trace_store.finished[0][1]["decision"] == "replied"
+    assert trace_store.finished[0][1]["sent_message_id"] == "bot-msg-10"
+    assert (
+        trace_store.finished[0][1]["topic_error_code"] == "topic_invalid_tool_arguments"
+    )

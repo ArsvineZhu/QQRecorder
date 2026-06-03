@@ -15,8 +15,8 @@ from .config import (
     build_config,
     is_chat_targeted,
 )
-from .context_builder import TopicContextError, build_context
-from .model_client import ReplyModelError, generate_reply
+from .context_builder import TopicContextError, build_context, expand_context
+from .model_client import ReplyGenerationResult, ReplyModelError, generate_reply
 from .plugin_utils import (
     chat_identity,
     json_list,
@@ -32,7 +32,7 @@ from .trigger import CooldownTracker, final_decision, prefilter_event
 
 class QQGrokReplyPlugin(NcatBotPlugin):
     name = "qq_grok_reply"
-    version = "0.1.0"
+    version = "1.0.0"
     author = "Arsvine Zhu"
     description = "基于 QQContextBot 的受控 AI 回复插件"
 
@@ -76,7 +76,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
     async def on_private_message(self, event: PrivateMessageEvent) -> None:
         await self._handle(event, "private")
 
-    async def _handle(self, event, _chat_type: str) -> None:
+    async def _handle(self, event, _chat_type: str) -> None:  # noqa: C901
         event_message_id = str(getattr(event, "message_id", "") or "")
         prefilter_reason = prefilter_event(event, self.settings)
         if prefilter_reason is None and not self._may_be_reply_to_bot(event):
@@ -107,9 +107,9 @@ class QQGrokReplyPlugin(NcatBotPlugin):
         )
 
         prompt_variant = (
-            "group_compact"
+            "group_topic_local"
             if getattr(event, "group_id", None) is not None
-            else "private_contextual"
+            else "private_topic_local"
         )
         self._log_runtime(
             "decision",
@@ -152,7 +152,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
 
         assert source_msg is not None
         try:
-            ctx = await resolve_awaitable(
+            local_ctx = await resolve_awaitable(
                 build_context(
                     source_msg,
                     bridge,
@@ -189,9 +189,7 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                     decision="error",
                     trigger_reason=decision_reason,
                     context_ids=[str(source_msg.message_id)],
-                    prompt_variant="group_topic_ai"
-                    if str(source_msg.chat_type) == "group"
-                    else "private_contextual",
+                    prompt_variant=prompt_variant,
                     topic_title=analysis.topic_title,
                     topic_summary=analysis.topic_summary,
                     topic_participants_json=json_list(
@@ -213,17 +211,17 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             "context",
             message_id=event_message_id,
             trigger_reason=decision_reason,
-            variant=ctx.variant,
-            context_ids=ctx.context_ids,
-            current_time=ctx.current_time,
-            sender_name=ctx.sender_name,
-            topic_title=ctx.topic_title,
-            topic_summary=ctx.topic_summary,
-            topic_confidence=ctx.topic_confidence,
-            topic_candidate_count=ctx.topic_candidate_count,
-            topic_error_code=ctx.topic_error_code,
-            topic_fallback_used=ctx.topic_fallback_used,
-            **self._context_log_payload(ctx),
+            variant=local_ctx.variant,
+            context_ids=local_ctx.context_ids,
+            current_time=local_ctx.current_time,
+            sender_name=local_ctx.sender_name,
+            topic_title=local_ctx.topic_title,
+            topic_summary=local_ctx.topic_summary,
+            topic_confidence=local_ctx.topic_confidence,
+            topic_candidate_count=local_ctx.topic_candidate_count,
+            topic_error_code=local_ctx.topic_error_code,
+            topic_fallback_used=local_ctx.topic_fallback_used,
+            **self._context_log_payload(local_ctx),
         )
         trace_id = None
         if self.settings.trace.enabled:
@@ -238,21 +236,23 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                 decision_seed=self._decision_seed(event),
                 decision="pending",
                 trigger_reason=decision_reason,
-                context_ids=ctx.context_ids,
-                prompt_variant=ctx.variant,
-                topic_title=ctx.topic_title,
-                topic_summary=ctx.topic_summary,
-                topic_participants_json=json_list(ctx.topic_participants),
-                topic_selected_ids_json=json_list(ctx.context_ids),
-                topic_candidate_count=ctx.topic_candidate_count,
-                topic_confidence=ctx.topic_confidence,
-                topic_error_code=ctx.topic_error_code,
-                topic_fallback_used=ctx.topic_fallback_used,
+                context_ids=local_ctx.context_ids,
+                prompt_variant=local_ctx.variant,
+                topic_title=local_ctx.topic_title,
+                topic_summary=local_ctx.topic_summary,
+                topic_participants_json=json_list(local_ctx.topic_participants),
+                topic_selected_ids_json=json_list(local_ctx.context_ids),
+                topic_candidate_count=local_ctx.topic_candidate_count,
+                topic_confidence=local_ctx.topic_confidence,
+                topic_error_code=local_ctx.topic_error_code,
+                topic_fallback_used=local_ctx.topic_fallback_used,
             )
 
+        ctx = local_ctx
+        topic_error_code = local_ctx.topic_error_code
         try:
-            reply_text, meta = await resolve_awaitable(
-                generate_reply(self.api, ctx, self.settings)
+            result = await resolve_awaitable(
+                generate_reply(self.api, local_ctx, self.settings)
             )
         except ReplyModelError as exc:
             fallback = await self._send_failure_fallback(event, decision_reason)
@@ -278,20 +278,135 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                     sent=fallback.sent,
                     sent_message_id=fallback.sent_message_id,
                     sent_parts=fallback.sent_parts,
+                    topic_error_code=topic_error_code,
                 )
             return
 
+        result = self._coerce_generation_result(result)
         self._log_runtime(
             "llm_response",
             message_id=event_message_id,
             trigger_reason=decision_reason,
-            model_name=meta["model_name"],
-            response_text=meta.get("response_text", reply_text),
-            request_summary=meta["model_request_summary"],
-            response_summary=meta["model_response_summary"],
+            model_name=result.model_name,
+            response_text=result.text,
+            request_summary=result.model_request_summary,
+            response_summary=result.model_response_summary,
         )
+
+        if result.requested_more_context:
+            self._log_runtime(
+                "request_more_context",
+                message_id=event_message_id,
+                reason=result.request_reason,
+                local_context_ids=local_ctx.context_ids,
+            )
+            try:
+                ctx = await resolve_awaitable(
+                    expand_context(
+                        source_msg,
+                        local_ctx,
+                        bridge,
+                        self.settings,
+                        event=event,
+                        trigger_reason=decision_reason,
+                        sender_name=sender_name(event),
+                        analyzer_api=self.api,
+                        runtime_api=self.api,
+                        request_reason=result.request_reason,
+                    )
+                )
+            except TopicContextError as exc:
+                topic_error_code = exc.analysis.error_code
+                self._log_runtime(
+                    "expand_context_error",
+                    message_id=event_message_id,
+                    trigger_reason=decision_reason,
+                    error_code=topic_error_code,
+                    request_reason=result.request_reason,
+                )
+                ctx = local_ctx
+                if trace_id is not None:
+                    await trace_store.update_trace_context(
+                        trace_id,
+                        context_ids=local_ctx.context_ids,
+                        prompt_variant=local_ctx.variant,
+                        topic_error_code=topic_error_code,
+                    )
+            else:
+                topic_error_code = ctx.topic_error_code
+                self._log_runtime(
+                    "expanded_context",
+                    message_id=event_message_id,
+                    trigger_reason=decision_reason,
+                    variant=ctx.variant,
+                    context_ids=ctx.context_ids,
+                    topic_title=ctx.topic_title,
+                    topic_summary=ctx.topic_summary,
+                    topic_confidence=ctx.topic_confidence,
+                    topic_candidate_count=ctx.topic_candidate_count,
+                    **self._context_log_payload(ctx),
+                )
+                if trace_id is not None:
+                    await trace_store.update_trace_context(
+                        trace_id,
+                        context_ids=ctx.context_ids,
+                        prompt_variant=ctx.variant,
+                        topic_title=ctx.topic_title,
+                        topic_summary=ctx.topic_summary,
+                        topic_participants_json=json_list(ctx.topic_participants),
+                        topic_selected_ids_json=json_list(ctx.context_ids),
+                        topic_candidate_count=ctx.topic_candidate_count,
+                        topic_confidence=ctx.topic_confidence,
+                        topic_error_code=ctx.topic_error_code,
+                        topic_fallback_used=ctx.topic_fallback_used,
+                    )
+
+            try:
+                result = await resolve_awaitable(
+                    generate_reply(
+                        self.api, ctx, self.settings, allow_more_context=False
+                    )
+                )
+                result = self._coerce_generation_result(result)
+                self._log_runtime(
+                    "llm_response_second_pass",
+                    message_id=event_message_id,
+                    trigger_reason=decision_reason,
+                    model_name=result.model_name,
+                    response_text=result.text,
+                    request_summary=result.model_request_summary,
+                    response_summary=result.model_response_summary,
+                )
+            except ReplyModelError as exc:
+                fallback = await self._send_failure_fallback(event, decision_reason)
+                self._log_runtime(
+                    "llm_error_second_pass",
+                    message_id=event_message_id,
+                    trigger_reason=decision_reason,
+                    error_code=exc.code,
+                    fallback_sent=fallback.sent,
+                    fallback_message_id=fallback.sent_message_id,
+                    fallback_parts=fallback.sent_parts,
+                    fallback_error_code=fallback.error_code,
+                )
+                if trace_id is not None:
+                    await trace_store.finish_trace(
+                        trace_id,
+                        decision="error",
+                        model_name="",
+                        model_request_summary="",
+                        model_response_summary="",
+                        latency_ms=int((time.perf_counter() - started_at) * 1000),
+                        error_code=exc.code,
+                        sent=fallback.sent,
+                        sent_message_id=fallback.sent_message_id,
+                        sent_parts=fallback.sent_parts,
+                        topic_error_code=topic_error_code,
+                    )
+                return
+
         outcome = await resolve_awaitable(
-            send_reply(self.api, event, reply_text, self.settings)
+            send_reply(self.api, event, result.text, self.settings)
         )
         self._log_runtime(
             "send_result",
@@ -305,14 +420,15 @@ class QQGrokReplyPlugin(NcatBotPlugin):
             await trace_store.finish_trace(
                 trace_id,
                 decision="replied" if outcome.sent else "error",
-                model_name=meta["model_name"],
-                model_request_summary=meta["model_request_summary"],
-                model_response_summary=meta["model_response_summary"],
+                model_name=result.model_name,
+                model_request_summary=result.model_request_summary,
+                model_response_summary=result.model_response_summary,
                 latency_ms=int((time.perf_counter() - started_at) * 1000),
                 error_code=outcome.error_code,
                 sent=outcome.sent,
                 sent_message_id=outcome.sent_message_id,
                 sent_parts=outcome.sent_parts,
+                topic_error_code=topic_error_code,
             )
 
     def _require_bridge(self) -> RecorderBridge:
@@ -407,3 +523,20 @@ class QQGrokReplyPlugin(NcatBotPlugin):
                 recent_block=ctx.recent_block,
             )
         return payload
+
+    @staticmethod
+    def _coerce_generation_result(result) -> ReplyGenerationResult:
+        if isinstance(result, ReplyGenerationResult):
+            return result
+        if isinstance(result, tuple) and len(result) == 2:
+            text, meta = result
+            meta = meta or {}
+            return ReplyGenerationResult(
+                text=str(text or ""),
+                model_name=str(meta.get("model_name", "") or ""),
+                model_request_summary=str(meta.get("model_request_summary", "") or ""),
+                model_response_summary=str(
+                    meta.get("model_response_summary", "") or ""
+                ),
+            )
+        raise TypeError("generate_reply returned unsupported result type")

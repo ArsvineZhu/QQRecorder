@@ -1,34 +1,21 @@
 import re
 from datetime import datetime
+from json import dumps
 from types import SimpleNamespace
 from typing import Any
 
 from .compat import import_sibling_plugin_module
 from .config import ReplyPluginSettings
+from .message_renderer import render_forward_tree, render_message_text
 
 unescape_text = import_sibling_plugin_module("qq_recorder.text_utils").unescape_text
 
 
 def render_message(message, *, settings: ReplyPluginSettings) -> str:
-    raw = visible_raw_text(message)
-    labels: list[str] = []
-    if has_image_marker(message):
-        labels.append("[表情]" if is_sticker_message(message) else "[图片]")
-    if has_forward_marker(message):
-        summary = render_forward_summary(message, settings)
-        labels.append(f"[合并转发]\n{summary}" if summary else "[合并转发]")
-    if has_reply_marker(message):
-        labels.append("[回复]")
-    if has_app_share_marker(message):
-        labels.append(share_label(message))
-    label_text = " ".join(labels)
-    if raw and label_text:
-        return f"{raw} {label_text}"
-    if raw:
-        return raw
-    if label_text:
-        return label_text
-    return ""
+    rendered = render_message_text(message, settings=settings)
+    if rendered:
+        return rendered
+    return visible_raw_text(message)
 
 
 def visible_raw_text(message) -> str:
@@ -42,32 +29,7 @@ def visible_raw_text(message) -> str:
 
 
 def render_forward_summary(message, settings: ReplyPluginSettings) -> str:
-    forwards = list(getattr(message, "forward_messages", []) or [])
-    if not forwards:
-        return ""
-    forwards.sort(key=lambda item: (getattr(item, "depth", 0), getattr(item, "id", 0)))
-    lines = ["合并转发摘要："]
-    used = len(lines[0])
-    truncated = False
-    for item in forwards[: settings.context.forward_max_items]:
-        nickname = str(
-            getattr(item, "nickname", "") or getattr(item, "user_id", "") or "未知"
-        )
-        summary = unescape_text(str(getattr(item, "content_summary", "") or "")).strip()
-        if not summary:
-            continue
-        line = f"{nickname}：{summary}"
-        next_used = used + len(line) + 1
-        if next_used > settings.context.forward_max_chars:
-            truncated = True
-            break
-        lines.append(line)
-        used = next_used
-    if len(forwards) > settings.context.forward_max_items:
-        truncated = True
-    if truncated:
-        lines.append("……已截断。")
-    return "\n".join(lines) if len(lines) > 1 else ""
+    return render_forward_tree(message, settings=settings)
 
 
 def render_line(
@@ -96,19 +58,40 @@ def current_message_text(
     raw_message = unescape_text(raw_message)
     if trigger_reason == "prefix" or trigger_reason.startswith("prefix:"):
         raw_message = strip_prefix(raw_message, settings.trigger.prefixes)
-    message_stub = message_with_raw(source_msg, raw_message)
+    message_stub = message_with_raw(source_msg, raw_message, replace_text_segment=True)
     return render_message(message_stub, settings=settings)
 
 
-def message_with_raw(message, raw_message: str):
+def message_with_raw(message, raw_message: str, *, replace_text_segment: bool = False):
     view = message_view(message)
     view.raw_message = raw_message
+    if replace_text_segment:
+        original_segments = list(getattr(view, "segments", []) or [])
+        non_text_segments = [
+            segment
+            for segment in original_segments
+            if getattr(segment, "segment_type", "") != "text"
+        ]
+        if raw_message.strip() or non_text_segments:
+            text_segment = SimpleNamespace(
+                segment_type="text",
+                segment_order=-1,
+                segment_data=dumps({"text": raw_message}, ensure_ascii=False),
+            )
+            view.segments = [text_segment, *non_text_segments]
     return view
 
 
 def message_view(message, **overrides):
     view = SimpleNamespace()
-    list_fields = {"images", "replies", "app_shares", "forward_messages"}
+    list_fields = {
+        "images",
+        "replies",
+        "app_shares",
+        "forward_messages",
+        "segments",
+        "at_mentions",
+    }
     for attr_name in (
         "message_id",
         "timestamp",
@@ -124,6 +107,8 @@ def message_view(message, **overrides):
         "replies",
         "app_shares",
         "forward_messages",
+        "segments",
+        "at_mentions",
         "sender_nickname",
         "sender_card",
         "nickname",

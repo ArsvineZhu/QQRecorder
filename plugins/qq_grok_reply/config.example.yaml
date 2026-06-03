@@ -20,15 +20,24 @@ read_after_write:
   backoff_ms: [50, 100, 200, 400, 800]
 
 context:
-  mode: topic_ai
+  mode: topic_ai  # recent=纯最近消息；topic_ai=局部优先，按需扩展话题摘要
   recent_limit_group: 6
   recent_limit_private: 10
+  local_recent_limit_group: 30
+  local_recent_limit_private: 30
+  local_recent_time_window_minutes_group: 30
+  local_recent_time_window_minutes_private: 30
+  quote_chain_max_depth_group: 10
+  quote_chain_max_depth_private: 10
+  quote_neighbor_limit_group: 10
+  quote_neighbor_limit_private: 10
   quote_chars_group: 320
   quote_chars_private: 480
   total_chars_group: 6000
   total_chars_private: 2200
   recent_chars_group: 120
   recent_chars_private: 180
+  # 仅在模型首轮明确申请更多上下文时，才会启用下面的大范围候选集
   candidate_limit_group: 80
   candidate_limit_private: 30
   candidate_time_window_minutes_group: 45
