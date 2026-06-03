@@ -1,7 +1,7 @@
 import time
 from typing import Any
 
-from .config import RECORDER_COMMAND_PREFIXES, ReplyPluginSettings, is_chat_targeted
+from ..config import RECORDER_COMMAND_PREFIXES, ReplyPluginSettings, is_chat_targeted
 
 try:
     from ncatbot.types import Reply as MessageReply

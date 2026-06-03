@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, asc, desc, or_, select
 from sqlalchemy.orm import selectinload
 
-from .compat import import_sibling_plugin_module
+from ..compat import import_sibling_plugin_module
 
 _models = import_sibling_plugin_module("qq_recorder.models")
 _storage = import_sibling_plugin_module("qq_recorder.storage")

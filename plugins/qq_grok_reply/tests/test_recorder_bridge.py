@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
-from plugins.qq_grok_reply.recorder_bridge import RecorderBridge
+from plugins.qq_grok_reply.infra import RecorderBridge
 from plugins.qq_recorder.storage import MessageStorage
 
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from plugins.qq_grok_reply.config import build_config
-from plugins.qq_grok_reply.context_builder import (
+from plugins.qq_grok_reply.context import (
     BuiltContext,
     TopicContextError,
     build_context,
@@ -199,7 +199,6 @@ def test_build_context_unescapes_text_and_collects_context_ids():
     assert "[12:30] 图图: [图片: 320x240" in built.recent_block
     assert "[12:30] 转发者: 合并转发摘要：" in built.recent_block
     assert "A：转发里的第一句" in built.recent_block
-    assert built.max_reply_chars == 500
 
 
 def test_build_context_respects_private_budget_and_recent_limit():

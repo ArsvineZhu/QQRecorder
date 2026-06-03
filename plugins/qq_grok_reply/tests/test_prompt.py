@@ -1,4 +1,4 @@
-from plugins.qq_grok_reply.prompt import (
+from plugins.qq_grok_reply.llm.prompt import (
     PromptInput,
     build_messages,
 )

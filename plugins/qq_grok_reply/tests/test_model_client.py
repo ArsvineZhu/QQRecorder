@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 from plugins.qq_grok_reply.config import build_config
-from plugins.qq_grok_reply.context_builder import BuiltContext
-from plugins.qq_grok_reply.model_client import ReplyModelError, generate_reply
+from plugins.qq_grok_reply.context import BuiltContext
+from plugins.qq_grok_reply.llm import ReplyModelError, generate_reply
 
 
 class _FakeAIAPI:

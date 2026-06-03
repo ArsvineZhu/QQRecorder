@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from .context_builder import BuiltContext
+from ..context.types import BuiltContext
 from .prompt import build_prompt_messages
 
 TOOL_NAME = "request_more_context"

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from .topic_analyzer import TopicAnalysis
+from ..llm.topic_analyzer import TopicAnalysis
 
 
 class TopicContextError(RuntimeError):
@@ -20,7 +20,6 @@ class BuiltContext:
     trigger_reason: str = ""
     current_time: str = ""
     sender_name: str = ""
-    max_reply_chars: int = 0
     topic_title: str = ""
     topic_summary: str = ""
     topic_participants: list[str] = field(default_factory=list)

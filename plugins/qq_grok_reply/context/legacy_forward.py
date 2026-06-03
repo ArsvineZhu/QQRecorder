@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 from typing import Any
 
-from .compat import import_sibling_plugin_module
-from .config import ReplyPluginSettings
-from .context_render import (
+from ..compat import import_sibling_plugin_module
+from ..config import ReplyPluginSettings
+from .render import (
     extract_forward_id,
     has_forward_marker,
     message_view,

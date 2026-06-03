@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 
 from plugins.qq_grok_reply.config import build_config
-from plugins.qq_grok_reply.message_renderer import render_message_text
+from plugins.qq_grok_reply.context.message_renderer import render_message_text
 
 
 def _segment(segment_type: str, data: dict, order: int):

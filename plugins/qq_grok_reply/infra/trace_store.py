@@ -4,7 +4,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import desc
 
-from .models import Base, ReplyTrace, init_engine
+from ..models import Base, ReplyTrace, init_engine
 
 _TOPIC_COLUMNS = {
     "topic_title": "VARCHAR DEFAULT ''",

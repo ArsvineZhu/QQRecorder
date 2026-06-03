@@ -1,11 +1,12 @@
 from typing import Any
 
-from .config import ReplyPluginSettings
-from .context_legacy_forward import (
+from ..config import ReplyPluginSettings
+from ..llm.topic_analyzer import TopicAnalysis, analyze_topic, validate_topic_analysis
+from .legacy_forward import (
     hydrate_legacy_forward_message,
     hydrate_legacy_forward_messages,
 )
-from .context_render import (
+from .render import (
     chronological_messages,
     current_message_text,
     display_name,
@@ -19,8 +20,7 @@ from .context_render import (
     trim_to_budget,
     unique,
 )
-from .context_types import BuiltContext, TopicContextError
-from .topic_analyzer import TopicAnalysis, analyze_topic, validate_topic_analysis
+from .types import BuiltContext, TopicContextError
 
 
 async def build_context(
@@ -423,14 +423,6 @@ def _assemble_context(
         if is_group and analysis
         else ("group_compact" if is_group else "private_contextual")
     )
-    max_reply_chars = (
-        min(500, settings.send.group_max_chars_per_part * settings.send.group_max_parts)
-        if is_group
-        else min(
-            1200,
-            settings.send.private_max_chars_per_part * settings.send.private_max_parts,
-        )
-    )
     return BuiltContext(
         context_ids=context_ids,
         quoted_block=quoted_block,
@@ -441,7 +433,6 @@ def _assemble_context(
         trigger_reason=trigger_reason,
         current_time=format_full_time(getattr(source_msg, "timestamp", None)),
         sender_name=current_sender,
-        max_reply_chars=max_reply_chars,
         topic_title=analysis.topic_title if analysis else "",
         topic_summary=analysis.topic_summary if analysis else "",
         topic_participants=participants,

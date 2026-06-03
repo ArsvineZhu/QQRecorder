@@ -4,8 +4,8 @@ from json import dumps
 from types import SimpleNamespace
 from typing import Any
 
-from .compat import import_sibling_plugin_module
-from .config import ReplyPluginSettings
+from ..compat import import_sibling_plugin_module
+from ..config import ReplyPluginSettings
 from .message_renderer import render_forward_tree, render_message_text
 
 unescape_text = import_sibling_plugin_module("qq_recorder.text_utils").unescape_text
