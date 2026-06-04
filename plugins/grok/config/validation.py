@@ -1,3 +1,4 @@
+import ntpath
 import os
 
 from .schema import AgentPluginSettings
@@ -7,7 +8,7 @@ def validate_config(settings: AgentPluginSettings) -> None:
     if (
         settings.enabled
         and settings.recorder_db
-        and not os.path.isabs(settings.recorder_db)
+        and not _is_absolute_path(settings.recorder_db)
     ):
         raise ValueError("grok.recorder_db must be an absolute path")
     if settings.agent.max_steps <= 0:
@@ -22,3 +23,7 @@ def validate_config(settings: AgentPluginSettings) -> None:
         )
     if not settings.trigger.prefixes:
         raise ValueError("trigger.prefixes must not be empty")
+
+
+def _is_absolute_path(value: str) -> bool:
+    return os.path.isabs(value) or ntpath.isabs(value)

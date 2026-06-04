@@ -60,6 +60,11 @@ class AgentRuntime:
                     or ""
                 ),
                 trigger_reason=trigger_reason,
+                bot_id=str(
+                    getattr(event, "self_id", "")
+                    or getattr(source_msg, "self_id", "")
+                    or ""
+                ),
                 current_sender=str(
                     getattr(source_msg, "sender_card", "")
                     or getattr(source_msg, "sender_nickname", "")

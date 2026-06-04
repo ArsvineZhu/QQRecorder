@@ -18,6 +18,7 @@ class ContextBundle:
     user_id: str
     current_message: str
     trigger_reason: str
+    bot_id: str = ""
     current_sender: str = ""
     current_time: str = ""
     group_instruction: str = ""
