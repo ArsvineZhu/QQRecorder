@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "display_name": {
+      "type": "string"
+    },
+    "preferred_name": {
+      "type": "string"
+    },
+    "group_instruction": {
+      "type": "string"
+    },
+    "private_instruction": {
+      "type": "string"
+    },
+    "language_style": {
+      "type": "string"
+    },
+    "habit_preferences": {
+      "type": "array"
+    }
+  },
+  "required": []
+}

@@ -1,0 +1,7 @@
+name = "grok"
+version = "1.0.0"
+main = "plugin.py"
+entry_class = "GrokPlugin"
+author = "Arsvine Zhu"
+description = "基于单 Agent 工具调用的独立回复插件"
+

@@ -15,6 +15,7 @@ from .models import (
     Base,
     ForwardMessage,
     Image,
+    ImageAnalysis,
     Message,
     MessageSegment,
     MonitoredChat,
@@ -501,6 +502,89 @@ class MessageStorage:
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none() is not None
+
+    # ── Image/Video analysis persistence ──────────────────────────────
+
+    async def save_image_analysis(
+        self,
+        *,
+        file_unique: str,
+        model_used: str,
+        analysis_json: str,
+        media_type: str = "image",
+        image_type: str = "",
+        confidence: float = 0.0,
+        prompt_version: str = "",
+        schema_version: str = "",
+        image_id: int | None = None,
+        message_id: int | None = None,
+    ) -> None:
+        async def _upsert() -> None:
+            async with self._session() as session:
+                try:
+                    stmt = select(ImageAnalysis).where(
+                        ImageAnalysis.file_unique == file_unique,
+                        ImageAnalysis.model_used == model_used,
+                    )
+                    result = await session.execute(stmt)
+                    row = result.scalar_one_or_none()
+                    if row is None:
+                        session.add(
+                            ImageAnalysis(
+                                file_unique=file_unique,
+                                model_used=model_used,
+                                analysis_json=analysis_json,
+                                media_type=media_type,
+                                image_type=image_type,
+                                confidence=confidence,
+                                prompt_version=prompt_version,
+                                schema_version=schema_version,
+                                image_id=image_id,
+                                message_id=message_id,
+                            )
+                        )
+                    else:
+                        row.analysis_json = analysis_json
+                        row.media_type = media_type
+                        row.image_type = image_type
+                        row.confidence = confidence
+                        row.prompt_version = prompt_version
+                        row.schema_version = schema_version
+                        if image_id is not None:
+                            row.image_id = image_id
+                        if message_id is not None:
+                            row.message_id = message_id
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        await self._run_with_lock_retry("save_image_analysis", _upsert)
+
+    async def get_image_analysis(
+        self,
+        file_unique: str,
+        model_used: str | None = None,
+    ) -> ImageAnalysis | None:
+        async with self._session() as session:
+            stmt = select(ImageAnalysis).where(ImageAnalysis.file_unique == file_unique)
+            if model_used:
+                stmt = stmt.where(ImageAnalysis.model_used == model_used)
+            stmt = stmt.order_by(desc(ImageAnalysis.updated_at)).limit(1)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def get_image_analyses_by_message(
+        self, message_db_id: int
+    ) -> list[ImageAnalysis]:
+        async with self._session() as session:
+            stmt = (
+                select(ImageAnalysis)
+                .where(ImageAnalysis.message_id == message_db_id)
+                .order_by(desc(ImageAnalysis.updated_at))
+            )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
 
 
 def _ensure_message_sender_columns(sync_conn) -> None:

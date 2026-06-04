@@ -1,0 +1,14 @@
+{
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "user_id": {
+            "type": "string",
+            "description": "要删除档案的用户的账号 ID。"
+        }
+    },
+    "required": [
+        "user_id"
+    ],
+    "description": "永久删除当前用户的档案信息。删除后下次调用 load_profile 会重新创建空白档案。"
+}

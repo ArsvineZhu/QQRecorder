@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "message_id": {
+      "type": ["string", "null"],
+      "description": "包含视频的消息 ID。默认分析当前消息中的第一个视频。"
+    }
+  },
+  "required": [],
+  "description": "分析一段视频的内容。通过视觉 AI 模型对视频进行解读，返回视频类型、时长、画面概述、关键事件、识别文字、音频摘要、核心含义等。适用于用户发了视频或回复视频消息的场景。注意：视频分析比图片慢很多，超时时间也更长。"
+}

@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "limit": {
+      "type": "integer",
+      "description": "最多返回几条最近消息。默认 12。超过 20 可能会被系统截断。"
+    },
+    "since_minutes": {
+      "type": "integer",
+      "description": "从当前时间回溯多少分钟。默认 30。范围 5~1440。"
+    }
+  },
+  "required": [],
+  "description": "加载当前会话的最近消息列表，用于理解聊天背景。返回按时间排序的消息列表，每条包含时间戳、发送者、消息文本、是否有图片/转发标记。建议 limit 设 10~15 即可获取足够的上下文。"
+}

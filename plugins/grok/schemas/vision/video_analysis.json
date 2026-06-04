@@ -1,0 +1,42 @@
+{
+    "media_type": "video",
+    "video_type": "real_life / meme / game_clip / screen_recording / animation / document_video / mixed / unknown",
+    "duration_summary": "对视频时长和节奏的简要描述；不知道则为空字符串",
+    "visual_summary": "视频整体画面内容",
+    "key_events": [
+        {
+            "time_range": {
+                "start_time": "HH:MM:SS 或空字符串",
+                "end_time": "HH:MM:SS 或空字符串",
+                "approximate": true
+            },
+            "event": "该时间段发生的主要事件"
+        }
+    ],
+    "visible_text": [
+        "视频中识别到的关键文字，隐私信息需脱敏"
+    ],
+    "audio_or_speech_summary": "如果能理解音频或语音，概括其内容；不能则为空字符串",
+    "semantic_meaning": "这个视频整体可能表达的含义",
+    "contextual_meaning": "结合聊天上下文后的含义变化",
+    "affective_reading": {
+        "tone": [
+            {
+                "label": "无奈",
+                "intensity": 0.0
+            }
+        ],
+        "evidence": "来自画面、字幕、声音、节奏、上下文的依据"
+    },
+    "uncertainty": {
+        "ambiguous_points": [],
+        "possible_alternative_meanings": []
+    },
+    "safety_and_privacy": {
+        "contains_real_person_face": false,
+        "contains_personal_info": false,
+        "contains_qr_or_barcode": false,
+        "contains_sensitive_document": false
+    },
+    "confidence": 0.0
+}
