@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -25,6 +25,7 @@ from ..context.render import (
     render_message,
     strip_prefix,
 )
+from ..context.types import BuiltContext
 from ..vision import (
     analyze_video,
     detect_image_intent,
@@ -77,6 +78,27 @@ class VisionBridge:
             and self.plugin._vision_quota is not None
         )
 
+    async def enrich_context(
+        self,
+        source_msg,
+        event,
+        ctx: BuiltContext,
+    ) -> BuiltContext:
+        if not self.enabled or not ctx.context_ids:
+            return ctx
+
+        light_ctx = await self._build_light_vision_context(source_msg, event)
+        intent = detect_image_intent(self._get_user_text(event), self.settings)
+        messages = await self._load_context_messages(source_msg, ctx.context_ids)
+        parts = await self._analyze_context_messages(
+            source_msg,
+            event,
+            messages,
+            light_ctx,
+            intent,
+        )
+        return replace(ctx, visual_context="\n\n".join(parts))
+
     async def build_context(self, source_msg, event) -> str:
         if not self.enabled:
             return ""
@@ -97,6 +119,38 @@ class VisionBridge:
                 parts.append(rendered)
 
         return "\n\n".join(parts)
+
+    async def _analyze_context_messages(
+        self,
+        source_msg,
+        event,
+        messages: list[Any],
+        light_ctx: str,
+        intent: str,
+    ) -> list[str]:
+        source_id = str(getattr(source_msg, "message_id", "") or "")
+        parts: list[str] = []
+        for message in messages:
+            message_entries: list[str] = []
+            images = getattr(message, "images", []) or []
+            if images:
+                message_entries.extend(
+                    await self._analyze_images(message, images, light_ctx, intent)
+                )
+            if str(getattr(message, "message_id", "") or "") == source_id:
+                for video_source in self._extract_video_sources(event, message):
+                    rendered = await self._analyze_video(
+                        message,
+                        video_source,
+                        light_ctx,
+                    )
+                    if rendered:
+                        message_entries.append(rendered)
+            if message_entries:
+                parts.append(
+                    self._format_context_visual_entry(message, message_entries)
+                )
+        return parts
 
     async def _analyze_images(  # noqa: C901
         self,
@@ -555,6 +609,59 @@ class VisionBridge:
     def _cache_version(self) -> str:
         vision = self.settings.vision
         return f"{vision.prompt_version}:{vision.schema_version}"
+
+    async def _load_context_messages(
+        self,
+        source_msg,
+        context_ids: list[str],
+    ) -> list[Any]:
+        bridge = self.plugin._bridge
+        source_id = str(getattr(source_msg, "message_id", "") or "")
+        seen: set[str] = set()
+        messages: list[Any] = []
+
+        for message_id in context_ids:
+            if not message_id or message_id in seen:
+                continue
+            seen.add(message_id)
+            if message_id == source_id:
+                messages.append(source_msg)
+                continue
+            if bridge is None:
+                continue
+            message = await bridge.get_message(message_id)
+            if message is not None:
+                messages.append(message)
+
+        if source_id and source_id not in seen:
+            messages.insert(0, source_msg)
+        return messages
+
+    def _format_context_visual_entry(
+        self,
+        message,
+        entries: list[str],
+    ) -> str:
+        message_id = str(getattr(message, "message_id", "") or "")
+        anchor = render_line(
+            message,
+            sender_name=display_name(message),
+            settings=self.settings,
+        ) or render_message(message, settings=self.settings)
+        header_lines: list[str] = []
+        if message_id:
+            header_lines.append(f"关联消息ID：{message_id}")
+        if anchor:
+            header_lines.append(f"关联消息：{anchor}")
+        else:
+            header_lines.append("关联消息：<无法渲染>")
+        header = "\n".join(header_lines)
+        if len(entries) == 1:
+            return f"{header}\n{entries[0]}"
+        body = "\n\n".join(
+            f"媒体{i}分析：\n{entry}" for i, entry in enumerate(entries, start=1)
+        )
+        return f"{header}\n{body}"
 
     def _require_client(self) -> OpenAI:
         client = self.plugin._vision_client

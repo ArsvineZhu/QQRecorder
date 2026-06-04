@@ -53,6 +53,8 @@ def test_generate_reply_returns_text_and_metadata():
     assert result.requested_more_context is False
     assert result.model_name == "demo"
     assert "当前消息" in result.model_request_summary
+    assert "【当前消息】" in result.model_request_user_prompt
+    assert "当前消息" in result.model_request_user_prompt
     assert result.model_response_summary == "你好，世界"
 
 

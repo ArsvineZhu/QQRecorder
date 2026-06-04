@@ -254,6 +254,9 @@ def test_plugin_handle_success_logs_full_context_only_when_enabled(
             {
                 "model_name": "demo",
                 "model_request_summary": "req",
+                "model_request_user_prompt": (
+                    "【会话信息】\n会话类型：private\n\n【当前消息】\n你好"
+                ),
                 "model_response_summary": "resp",
             },
         ),
@@ -268,6 +271,11 @@ def test_plugin_handle_success_logs_full_context_only_when_enabled(
     assert any('"current_block": "你好"' in entry for entry in caplog.messages)
     assert any('"quoted_block": "引用"' in entry for entry in caplog.messages)
     assert any('"recent_block": "最近"' in entry for entry in caplog.messages)
+    expected_prompt_log = (
+        "qq_grok_reply llm_request_user_prompt |\n"
+        "【会话信息】\n会话类型：private\n\n【当前消息】\n你好"
+    )
+    assert any(expected_prompt_log in entry for entry in caplog.messages)
 
 
 def test_plugin_handle_reply_to_bot_reaches_final_decision(tmp_path: Path, monkeypatch):
@@ -691,3 +699,119 @@ def test_plugin_handle_expand_context_failure_respects_disabled_fallback(
     assert (
         trace_store.finished[0][1]["topic_error_code"] == "topic_invalid_tool_arguments"
     )
+
+
+def test_plugin_handle_refreshes_visual_context_after_expand_context(
+    tmp_path: Path, monkeypatch
+):
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "monitor_all": False,
+            "targets": {"groups": ["30001"]},
+            "cooldown": {"group_chat_sec": 0, "group_user_sec": 0},
+            "vision": {"enabled": True, "dashscope_api_key": "key"},
+        }
+    )
+    source_msg = SimpleNamespace(
+        id=11,
+        message_id="evt-1",
+        chat_type="group",
+        group_id="30001",
+        user_id="20001",
+        replies=[],
+        images=[],
+    )
+    plugin = _make_plugin(
+        settings, tmp_path, _FakeBridge(source_msg), _FakeTraceStore()
+    )
+    plugin._vision_client = cast(Any, object())
+    plugin._vision_cache = cast(Any, object())
+    plugin._vision_quota = cast(Any, object())
+    event = _FakeEvent(
+        chat_type="group",
+        raw_message="/ask 这里说什么了",
+        group_id="30001",
+    )
+
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.app.flow.build_context",
+        lambda *_args, **_kwargs: BuiltContext(
+            context_ids=["evt-1"],
+            quoted_block="",
+            recent_block="[12:29] A: 本地上下文",
+            current_block="这里说什么了",
+            variant="group_topic_local",
+            chat_type="group",
+        ),
+    )
+
+    async def _expand_context(*_args, **_kwargs):
+        return BuiltContext(
+            context_ids=["evt-1", "img-1"],
+            quoted_block="[12:28] A: [图片: 已下载]",
+            recent_block="[12:29] A: 本地上下文",
+            current_block="这里说什么了",
+            variant="group_topic_expanded",
+            chat_type="group",
+        )
+
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.app.flow.expand_context", _expand_context
+    )
+
+    async def _enrich_context(_self, _source_msg, _event, ctx):
+        if ctx.context_ids == ["evt-1"]:
+            return ctx
+        return BuiltContext(
+            context_ids=ctx.context_ids,
+            quoted_block=ctx.quoted_block,
+            recent_block=ctx.recent_block,
+            current_block=ctx.current_block,
+            variant=ctx.variant,
+            chat_type=ctx.chat_type,
+            visual_context="关联消息：[12:28] A: [图片: 已下载]\n图片类型：meme",
+        )
+
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.app.flow.VisionBridge.enrich_context",
+        _enrich_context,
+    )
+
+    calls = {"generate": 0}
+
+    async def _generate_reply(_api, ctx, _settings, allow_more_context=True):
+        calls["generate"] += 1
+        if allow_more_context:
+            assert ctx.visual_context == ""
+            return ReplyGenerationResult(
+                text="",
+                requested_more_context=True,
+                request_reason="需要更多上下文",
+                model_name="demo",
+                model_request_summary="req-1",
+                model_response_summary="",
+            )
+        assert "图片类型：meme" in ctx.visual_context
+        return ReplyGenerationResult(
+            text="这是图里的内容",
+            model_name="demo",
+            model_request_summary="req-2",
+            model_response_summary="resp-2",
+        )
+
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.app.flow.generate_reply", _generate_reply
+    )
+    monkeypatch.setattr(
+        "plugins.qq_grok_reply.app.flow.send_reply",
+        lambda *_args, **_kwargs: SendOutcome(True, "bot-msg-11", 1, None),
+    )
+
+    asyncio.run(plugin._handle(event, "group"))
+
+    trace_store = cast(_FakeTraceStore, plugin._trace_store)
+    assert calls["generate"] == 2
+    assert trace_store.finished[0][1]["decision"] == "replied"
+    assert trace_store.finished[0][1]["sent_message_id"] == "bot-msg-11"

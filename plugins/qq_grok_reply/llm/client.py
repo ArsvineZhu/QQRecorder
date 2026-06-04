@@ -41,6 +41,7 @@ class ReplyGenerationResult:
     request_reason: str = ""
     model_name: str = ""
     model_request_summary: str = ""
+    model_request_user_prompt: str = ""
     model_response_summary: str = ""
 
 
@@ -55,6 +56,7 @@ async def generate_reply(
         else settings.model.max_tokens_private
     )
     preview_chars = settings.trace.preview_chars
+    user_prompt = str(messages[-1]["content"])
     last_error: Exception | None = None
 
     for _attempt in range(retries + 1):
@@ -82,6 +84,7 @@ async def generate_reply(
                     model_request_summary=_summarize(
                         messages[-1]["content"], preview_chars
                     ),
+                    model_request_user_prompt=user_prompt,
                     model_response_summary=_summarize(
                         f"[request_more_context] {request_reason}",
                         preview_chars,
@@ -102,6 +105,7 @@ async def generate_reply(
                 model_request_summary=_summarize(
                     messages[-1]["content"], preview_chars
                 ),
+                model_request_user_prompt=user_prompt,
                 model_response_summary=_summarize(text, preview_chars),
             )
         except ReplyModelError:

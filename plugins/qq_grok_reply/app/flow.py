@@ -110,9 +110,6 @@ class PluginFlow:
 
         assert source_msg is not None
 
-        # Vision analysis (lightweight context, runs before build_context)
-        visual_context = await self._vision_bridge.build_context(source_msg, event)
-
         try:
             local_ctx = await resolve_awaitable(
                 build_context(
@@ -124,7 +121,7 @@ class PluginFlow:
                     sender_name=sender_name(event),
                     analyzer_api=self.api,
                     runtime_api=self.api,
-                    visual_context=visual_context,
+                    visual_context="",
                 )
             )
         except TopicContextError as exc:
@@ -169,6 +166,7 @@ class PluginFlow:
                     topic_fallback_used=False,
                 )
             return
+        local_ctx = await self._enrich_visual_context(source_msg, event, local_ctx)
 
         self._log_runtime(
             "context",
@@ -255,6 +253,10 @@ class PluginFlow:
             request_summary=result.model_request_summary,
             response_summary=result.model_response_summary,
         )
+        self._log_user_prompt(
+            "llm_request_user_prompt",
+            result.model_request_user_prompt,
+        )
 
         if result.requested_more_context:
             self._log_runtime(
@@ -323,6 +325,7 @@ class PluginFlow:
                         )
                     return
             else:
+                ctx = await self._enrich_visual_context(source_msg, event, ctx)
                 topic_error_code = ctx.topic_error_code
                 self._log_runtime(
                     "expanded_context",
@@ -366,6 +369,10 @@ class PluginFlow:
                     response_text=result.text,
                     request_summary=result.model_request_summary,
                     response_summary=result.model_response_summary,
+                )
+                self._log_user_prompt(
+                    "llm_request_user_prompt_second_pass",
+                    result.model_request_user_prompt,
                 )
             except ReplyModelError as exc:
                 fallback = await self._send_failure_fallback(event, decision_reason)
@@ -466,6 +473,13 @@ class PluginFlow:
         )
         return bool(chat_id and is_chat_targeted(chat_type, chat_id, self.settings))
 
+    async def _enrich_visual_context(self, source_msg, event, ctx):
+        try:
+            return await self._vision_bridge.enrich_context(source_msg, event, ctx)
+        except Exception as exc:
+            self.logger.warning("vision: failed to enrich context: %s", exc)
+            return ctx
+
     async def _send_failure_fallback(self, event, decision_reason: str) -> SendOutcome:
         is_group = getattr(event, "group_id", None) is not None
         should_send = (
@@ -530,6 +544,11 @@ class PluginFlow:
             )
         return payload
 
+    def _log_user_prompt(self, stage: str, prompt_text: str) -> None:
+        if not self.settings.trace.log_runtime or not prompt_text:
+            return
+        self.logger.info("qq_grok_reply %s |\n%s", stage, prompt_text)
+
     @staticmethod
     def _coerce_generation_result(result) -> ReplyGenerationResult:
         if isinstance(result, ReplyGenerationResult):
@@ -541,6 +560,9 @@ class PluginFlow:
                 text=str(text or ""),
                 model_name=str(meta.get("model_name", "") or ""),
                 model_request_summary=str(meta.get("model_request_summary", "") or ""),
+                model_request_user_prompt=str(
+                    meta.get("model_request_user_prompt", "") or ""
+                ),
                 model_response_summary=str(
                     meta.get("model_response_summary", "") or ""
                 ),

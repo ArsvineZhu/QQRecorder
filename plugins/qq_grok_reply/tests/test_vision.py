@@ -7,6 +7,7 @@ from PIL import Image
 
 from plugins.qq_grok_reply.app.vision_bridge import VisionBridge, _prepare_for_api
 from plugins.qq_grok_reply.config import build_config
+from plugins.qq_grok_reply.context import BuiltContext
 from plugins.qq_grok_reply.vision.cache import VisionCacheRow, VisionCacheStore
 from plugins.qq_grok_reply.vision.schemas import (
     AffectiveReading,
@@ -227,6 +228,105 @@ def test_extract_video_sources_from_event_segments():
     assert videos[0].file_size == 2048
     assert videos[0].duration_sec == 31
     assert videos[0].title == "demo"
+
+
+def test_enrich_context_adds_visual_results_for_quoted_and_recent_images(monkeypatch):
+    async def _run() -> None:
+        settings = build_config(
+            {
+                "enabled": True,
+                "recorder_db": "C:/tmp/recorder.db",
+                "vision": {"enabled": True, "dashscope_api_key": "key"},
+            }
+        )
+        source = _message(
+            "source-1",
+            "这里说什么了",
+            sender="Sender",
+            timestamp=datetime(2026, 6, 3, 12, 1, tzinfo=UTC),
+        )
+        source.replies = [SimpleNamespace(reply_to_message_id="quoted-1")]
+        quoted = _message(
+            "quoted-1",
+            "",
+            sender="Quoted",
+            timestamp=datetime(2026, 6, 3, 12, 0, tzinfo=UTC),
+        )
+        quoted.has_image = True
+        quoted.segments = [
+            SimpleNamespace(
+                segment_type="image",
+                segment_order=0,
+                segment_data=json.dumps({"url": "https://example.com/quoted.png"}),
+            )
+        ]
+        quoted.images = [SimpleNamespace(file_unique="quoted-image")]
+        recent = _message(
+            "recent-1",
+            "",
+            sender="Recent",
+            timestamp=datetime(2026, 6, 3, 11, 59, tzinfo=UTC),
+        )
+        recent.has_image = True
+        recent.segments = [
+            SimpleNamespace(
+                segment_type="image",
+                segment_order=0,
+                segment_data=json.dumps({"url": "https://example.com/recent.png"}),
+            )
+        ]
+        recent.images = [SimpleNamespace(file_unique="recent-image")]
+
+        class _Bridge:
+            async def get_message(self, message_id: str):
+                mapping = {
+                    "quoted-1": quoted,
+                    "recent-1": recent,
+                }
+                return mapping.get(message_id)
+
+            async def get_recent_window(self, *_args, **_kwargs):
+                return [recent, source]
+
+        plugin = SimpleNamespace(
+            settings=settings,
+            logger=SimpleNamespace(
+                info=lambda *args, **kwargs: None,
+                warning=lambda *args, **kwargs: None,
+            ),
+            _vision_client=object(),
+            _vision_cache=object(),
+            _vision_quota=object(),
+            _bridge=_Bridge(),
+        )
+        bridge = VisionBridge(plugin)
+        event = SimpleNamespace(raw_message="[CQ:reply,id=quoted-1]这里说什么了")
+        built = BuiltContext(
+            context_ids=["source-1", "quoted-1", "recent-1"],
+            quoted_block="[12:00] Quoted: [图片: 已下载]",
+            recent_block="[11:59] Recent: [图片: 已下载]",
+            current_block="[12:01] Sender: 这里说什么了",
+            variant="private_topic_local",
+            chat_type="private",
+        )
+
+        async def _fake_analyze_images(message, images, light_ctx: str, intent: str):
+            assert "当前消息：这里说什么了" in light_ctx
+            assert intent == "default"
+            return [f"analysis:{message.message_id}:{len(images)}"]
+
+        monkeypatch.setattr(bridge, "_analyze_images", _fake_analyze_images)
+
+        enriched = await bridge.enrich_context(source, event, built)
+
+        assert "关联消息ID：quoted-1" in enriched.visual_context
+        assert "关联消息：[12:00] Quoted: [图片]" in enriched.visual_context
+        assert "analysis:quoted-1:1" in enriched.visual_context
+        assert "关联消息ID：recent-1" in enriched.visual_context
+        assert "关联消息：[11:59] Recent: [图片]" in enriched.visual_context
+        assert "analysis:recent-1:1" in enriched.visual_context
+
+    asyncio.run(_run())
 
 
 def test_render_visual_context_exposes_richer_fields_with_budget():
