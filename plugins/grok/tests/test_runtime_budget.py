@@ -1,8 +1,10 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 from plugins.grok.app.runtime import AgentRuntime
 from plugins.grok.context.evidence import AgentToolCall
+from plugins.grok.tools.registry import ToolResponse
 
 
 class _LargePayloadRegistry:
@@ -11,7 +13,7 @@ class _LargePayloadRegistry:
 
     async def execute(self, name, arguments, context):
         del name, arguments, context
-        return {"status": "ok", "data": {"payload": "x" * 500}}
+        return ToolResponse(status="ok", data={"payload": "x" * 500})
 
 
 class _SingleToolAdapter:
@@ -81,6 +83,7 @@ def test_runtime_clips_large_evidence_payload_to_budget():
             if block.kind == "tool_result"
         )
         assert len(tool_result.content) <= 120
+        assert '"status": "ok"' in tool_result.content
         assert outcome.text == "done"
 
     asyncio.run(_run())
@@ -146,6 +149,10 @@ def test_runtime_stops_at_global_tool_call_budget():
         assert outcome.error_code == "tool_budget_exceeded"
         assert len([step for step in outcome.steps if step.status == "ok"]) == 2
         assert outcome.steps[-1].status == "skipped"
+        payload = json.loads(outcome.steps[-1].summary)
+        assert payload["status"] == "failed"
+        assert payload["error_code"] == "tool_budget_exceeded"
+        assert payload["retryable"] is False
 
     asyncio.run(_run())
 
@@ -193,5 +200,9 @@ def test_runtime_stops_duplicate_track_reply_loop():
         assert len([step for step in outcome.steps if step.status == "ok"]) == 1
         assert outcome.steps[-1].status == "skipped"
         assert outcome.steps[-1].tool_name == "track_reply"
+        payload = json.loads(outcome.steps[-1].summary)
+        assert payload["status"] == "failed"
+        assert payload["error_code"] == "duplicate_track_reply"
+        assert payload["retryable"] is False
 
     asyncio.run(_run())

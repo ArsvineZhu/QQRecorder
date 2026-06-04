@@ -52,13 +52,21 @@ def _track_reply_handler(plugin):
             )
         max_depth = int(arguments.get("max_depth", 6) or 6)
         chain = await bridge.get_reply_chain(source_msg, max_depth=max_depth)
-        return ToolResponse(
-            status="ok",
-            data={
-                "messages": [_message_payload(item) for item in chain],
-                "root_message_id": str(chain[-1].message_id) if chain else None,
-            },
-        )
+        data = {
+            "messages": [_message_payload(item) for item in chain],
+            "root_message_id": str(chain[-1].message_id) if chain else None,
+        }
+        if not chain:
+            return ToolResponse(
+                status="failed",
+                data=data,
+                error_code="reply_chain_not_found",
+                message=(
+                    "这条引用链已经查询完，记录中没有可用结果，不要再次调用 track_reply"
+                ),
+                retryable=False,
+            )
+        return ToolResponse(status="ok", data=data)
 
     return _handler
 

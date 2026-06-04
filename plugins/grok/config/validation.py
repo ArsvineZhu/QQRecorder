@@ -16,5 +16,9 @@ def validate_config(settings: AgentPluginSettings) -> None:
         raise ValueError("agent.max_tool_calls_per_turn must be > 0")
     if settings.agent.max_tool_calls_total <= 0:
         raise ValueError("agent.max_tool_calls_total must be > 0")
+    if settings.agent.max_tool_calls_total < settings.agent.max_tool_calls_per_turn:
+        raise ValueError(
+            "agent.max_tool_calls_total must be >= agent.max_tool_calls_per_turn"
+        )
     if not settings.trigger.prefixes:
         raise ValueError("trigger.prefixes must not be empty")

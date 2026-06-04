@@ -68,6 +68,28 @@ def test_track_reply_returns_root_and_messages():
     asyncio.run(_run())
 
 
+def test_track_reply_empty_chain_is_non_retryable_failure():
+    async def _run():
+        source = _message("m-current", "当前")
+        plugin = SimpleNamespace(_bridge=_BridgeStub(source, chain=[]))
+        tool = next(
+            item for item in build_context_tools(plugin) if item.name == "track_reply"
+        )
+
+        result = await tool.handler(
+            {"source_msg": source},
+            {"max_depth": 4},
+        )
+
+        assert result.status == "failed"
+        assert result.error_code == "reply_chain_not_found"
+        assert result.retryable is False
+        assert result.data["messages"] == []
+        assert "不要再次调用 track_reply" in result.message
+
+    asyncio.run(_run())
+
+
 def test_load_context_returns_recent_window_messages():
     async def _run():
         source = _message("m-current", "当前")

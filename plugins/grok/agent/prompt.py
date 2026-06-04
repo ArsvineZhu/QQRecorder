@@ -8,8 +8,8 @@ from typing import Any
 def _top(data: dict) -> dict:
     """Normalize to ``{"data": {...}}`` wrapper format.
 
-    ``_normalize_result_payload`` stores only the inner ``data`` dict.
-    Renderers expect ``data["data"]["messages"]``. Re-wrap if needed.
+    Tool renderers expect a ``{"data": {...}}`` envelope. Re-wrap legacy
+    payloads that still provide only the inner data dict.
     """
     if "data" not in data:
         return {"data": data}
@@ -168,9 +168,15 @@ def _renderer(name: str):
 
 @_renderer("track_reply")
 def _render_track_reply(data: dict) -> str:
+    status = str(data.get("status", "") or "")
+    error_code = str(data.get("error_code", "") or "")
+    message = str(data.get("message", "") or "")
     messages = data.get("data", {}).get("messages", []) or []
     if not messages:
-        return "(引用链为空)"
+        if status == "failed" or error_code:
+            detail = message or "引用链为空，不要重复调用 track_reply。"
+            return f"[引用链不可继续查询] {_sanitize_text(detail)}"
+        return "(引用链为空：这条链已经查完，不要重复调用 track_reply。)"
     lines: list[str] = []
     for msg in messages:
         ts = str(msg.get("timestamp", "") or "")
