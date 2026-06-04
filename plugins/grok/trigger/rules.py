@@ -103,6 +103,7 @@ def final_decision(
     reason = prefilter_reason
     if reason is None and settings.trigger.allow_reply_to_bot:
         reply_ids = _extract_reply_ids(getattr(event, "message", None))
+        reply_ids |= _extract_recorded_reply_ids(source_msg)
         if bot_reply_message_ids and reply_ids & bot_reply_message_ids:
             reason = "reply_to_bot"
 
@@ -158,3 +159,14 @@ def _extract_reply_ids(message) -> set[str]:
         }
     except Exception:
         return set()
+
+
+def _extract_recorded_reply_ids(source_msg) -> set[str]:
+    if source_msg is None:
+        return set()
+    result: set[str] = set()
+    for reply in getattr(source_msg, "replies", []) or []:
+        value = getattr(reply, "reply_to_message_id", None)
+        if value:
+            result.add(str(value))
+    return result

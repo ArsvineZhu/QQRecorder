@@ -315,7 +315,15 @@ def _track_reply_key(arguments: dict[str, Any], source_msg: Any) -> tuple[str, i
         or getattr(source_msg, "id", "")
         or "current"
     )
-    return (message_id, int(arguments.get("max_depth") or 6))
+    return (message_id, _safe_track_reply_depth(arguments.get("max_depth")))
+
+
+def _safe_track_reply_depth(value: Any) -> int:
+    try:
+        depth = int(value or 6)
+    except (TypeError, ValueError):
+        return 6
+    return max(1, depth)
 
 
 def _chat_type(event) -> str:

@@ -95,6 +95,12 @@ def _read_picture_handler(plugin):
         if cached is not None:
             return ToolResponse(status="ok", data=analysis_to_dict(cached))
 
+        quota = getattr(plugin, "_vision_quota", None)
+        if quota is not None:
+            user_id, chat_id = _quota_identity(context, message)
+            if not quota.check_and_consume_image(user_id, chat_id):
+                return _quota_failed("image")
+
         b64 = base64.b64encode(prepared.data).decode("ascii")
         analysis = await analyze_image(
             plugin._vision_client,
@@ -145,9 +151,18 @@ def _read_video_handler(plugin):
                 error_code="vision_unavailable",
                 message="vision client not configured",
             )
+        message = await _resolve_message(plugin, context, arguments)
+        if message is None:
+            return ToolResponse(
+                status="failed",
+                data={},
+                error_code="message_not_found",
+                message="message not available",
+                retryable=False,
+            )
         source_msg = context.get("source_msg")
-        event = context.get("event")
-        videos = _extract_video_sources(event, source_msg)
+        event = context.get("event") if message is source_msg else None
+        videos = _extract_video_sources(event, message)
         if not videos:
             return ToolResponse(
                 status="failed",
@@ -170,13 +185,19 @@ def _read_video_handler(plugin):
         if cached is not None:
             return ToolResponse(status="ok", data=video_analysis_to_dict(cached))
 
+        quota = getattr(plugin, "_vision_quota", None)
+        if quota is not None:
+            user_id, chat_id = _quota_identity(context, message)
+            if not quota.check_and_consume_video(user_id, chat_id):
+                return _quota_failed("video")
+
         analysis = await analyze_video(
             plugin._vision_client,
             video["local_path"],
             video["url"],
             file_unique,
             plugin.settings,
-            chat_context=str(getattr(source_msg, "raw_message", "") or ""),
+            chat_context=str(getattr(message, "raw_message", "") or ""),
             title=video["title"],
             intro=video["intro"],
         )
@@ -195,7 +216,7 @@ def _read_video_handler(plugin):
             payload=payload,
             media_type="video",
             image_id=None,
-            message_db_id=getattr(source_msg, "id", None),
+            message_db_id=getattr(message, "id", None),
         )
         return ToolResponse(
             status="ok" if not analysis.error_code else "failed",
@@ -282,6 +303,30 @@ def _extract_video_sources(event, source_msg) -> list[dict[str, Any]]:
             }
         )
     return result
+
+
+def _quota_identity(context: dict[str, Any], message: Any) -> tuple[str, str]:
+    user_id = str(
+        context.get("user_id") or getattr(message, "user_id", "") or "unknown_user"
+    )
+    chat_id = str(
+        context.get("chat_id")
+        or getattr(message, "group_id", "")
+        or getattr(message, "user_id", "")
+        or "unknown_chat"
+    )
+    return user_id, chat_id
+
+
+def _quota_failed(media_type: str) -> ToolResponse:
+    label = "图片" if media_type == "image" else "视频"
+    return ToolResponse(
+        status="failed",
+        data={"media_type": media_type},
+        error_code="vision_quota_exceeded",
+        message=f"今日{label}视觉分析额度已用尽",
+        retryable=False,
+    )
 
 
 def _clean_string(value) -> str | None:

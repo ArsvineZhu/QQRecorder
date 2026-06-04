@@ -203,10 +203,26 @@ def _render_block(block) -> str:
         return _sanitize_text(content[:2000])
 
     payload = _top(payload)
+    failed = _render_failed_tool_response(label, payload)
+    if failed:
+        return failed
     renderer = _RENDERERS.get(label)
     if renderer:
         return renderer(payload)
     return f"```json\n{_sanitize_text(content[:2000])}\n```"
+
+
+def _render_failed_tool_response(label: str, payload: dict) -> str:
+    if str(payload.get("status", "") or "") != "failed":
+        return ""
+    error_code = str(payload.get("error_code", "") or "unknown_error")
+    message = str(payload.get("message", "") or "工具返回失败")
+    retryable = payload.get("retryable", False)
+    retry_text = "可重试" if retryable else "不可重试"
+    return (
+        f"- **工具 `{label}` 失败**：{_sanitize_text(message)} "
+        f"(`{error_code}`, {retry_text})"
+    )
 
 
 _RENDERERS: dict[str, Any] = {}

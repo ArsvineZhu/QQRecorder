@@ -93,7 +93,7 @@ class GrokPlugin(NcatBotPlugin):
         self._vision_client = None
         self._vision_cache = None
         self._vision_quota = None
-        self._profile_store = None
+        self._profile_json_store = None
         self._runtime = None
         self.logger.info("grok unloaded")
 

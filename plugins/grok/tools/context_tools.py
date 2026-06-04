@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from plugins.qq_recorder.text_utils import unescape_text
-
+from ..compat import import_sibling_plugin_module
 from ..shared import load_schema
 from .registry import ToolDefinition, ToolResponse
+
+_text_utils = import_sibling_plugin_module("qq_recorder.text_utils")
+unescape_text = _text_utils.unescape_text
 
 logger = logging.getLogger("grok.context_tools")
 
