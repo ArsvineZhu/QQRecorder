@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from PIL import Image, ImageOps
 
@@ -35,6 +36,12 @@ from ..vision import (
     select_model,
 )
 from ..vision.analyzer import analyze_image as _analyze_image
+from ..vision.cache import VisionCacheStore
+from ..vision.quota import VisionQuotaTracker
+from ..vision.schemas import VisualAnalysis
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 
 @dataclass(slots=True)
@@ -102,6 +109,8 @@ class VisionBridge:
         user_id = str(getattr(source_msg, "user_id", "") or "")
         chat_id = str(getattr(source_msg, "group_id", None) or source_msg.user_id)
         cache_version = self._cache_version()
+        cache = self._require_cache()
+        quota = self._require_quota()
         results: list[str] = []
         escalations_used = 0
 
@@ -122,7 +131,7 @@ class VisionBridge:
             file_unique = str(getattr(image, "file_unique", "") or "")
             model = select_model(intent, file_size or 0, "", self.settings)
 
-            cached = await self.plugin._vision_cache.get_visual(
+            cached = await cache.get_visual(
                 file_unique,
                 model,
                 cache_version,
@@ -132,7 +141,7 @@ class VisionBridge:
                 results.append(render_visual_context(cached))
                 continue
 
-            if not self.plugin._vision_quota.check_and_consume_image(user_id, chat_id):
+            if not quota.check_and_consume_image(user_id, chat_id):
                 self.logger.warning(
                     "vision: image quota exhausted user=%s chat=%s", user_id, chat_id
                 )
@@ -143,7 +152,7 @@ class VisionBridge:
                 and model != vision.image_fast_model
                 and vision.cache_enabled
             ):
-                cached_flash = await self.plugin._vision_cache.get_visual(
+                cached_flash = await cache.get_visual(
                     file_unique,
                     vision.image_fast_model,
                     cache_version,
@@ -163,7 +172,7 @@ class VisionBridge:
                         if escalated is not None and escalated_model is not None:
                             analysis = escalated
                             escalations_used += 1
-                            await self.plugin._vision_cache.put_visual(
+                            await cache.put_visual(
                                 file_unique,
                                 escalated_model,
                                 cache_version,
@@ -180,7 +189,7 @@ class VisionBridge:
                 continue
 
             if file_unique and vision.cache_enabled:
-                await self.plugin._vision_cache.put_visual(
+                await cache.put_visual(
                     file_unique,
                     model,
                     cache_version,
@@ -198,7 +207,7 @@ class VisionBridge:
                     analysis = escalated
                     escalations_used += 1
                     if file_unique and vision.cache_enabled:
-                        await self.plugin._vision_cache.put_visual(
+                        await cache.put_visual(
                             file_unique,
                             escalated_model,
                             cache_version,
@@ -215,7 +224,7 @@ class VisionBridge:
         file_unique: str,
         model: str,
         light_ctx: str,
-    ):
+    ) -> VisualAnalysis | None:
         image_bytes = await self._get_image_bytes(image)
         if image_bytes is None:
             return None
@@ -234,7 +243,7 @@ class VisionBridge:
 
         try:
             return await _analyze_image(
-                self.plugin._vision_client,
+                self._require_client(),
                 image_b64,
                 file_unique,
                 self.settings,
@@ -248,11 +257,11 @@ class VisionBridge:
 
     async def _run_escalation(
         self,
-        initial,
+        initial: VisualAnalysis,
         image,
         intent: str,
         light_ctx: str,
-    ) -> tuple[object | None, str | None]:
+    ) -> tuple[VisualAnalysis | None, str | None]:
         model = select_escalation_model(initial, intent, self.settings)
         if model is None:
             return None, None
@@ -269,7 +278,7 @@ class VisionBridge:
 
         try:
             analysis = await escalate_analysis(
-                self.plugin._vision_client,
+                self._require_client(),
                 image_b64,
                 initial,
                 intent,
@@ -313,7 +322,8 @@ class VisionBridge:
 
         user_id = str(getattr(source_msg, "user_id", "") or "")
         chat_id = str(getattr(source_msg, "group_id", None) or source_msg.user_id)
-        if not self.plugin._vision_quota.check_and_consume_video(user_id, chat_id):
+        quota = self._require_quota()
+        if not quota.check_and_consume_video(user_id, chat_id):
             self.logger.warning(
                 "vision: video quota exhausted user=%s chat=%s", user_id, chat_id
             )
@@ -325,7 +335,8 @@ class VisionBridge:
 
         cache_version = self._cache_version()
         file_unique = hashlib.md5(source_key.encode("utf-8")).hexdigest()
-        cached = await self.plugin._vision_cache.get_video(
+        cache = self._require_cache()
+        cached = await cache.get_video(
             file_unique,
             vision.video_summary_model,
             cache_version,
@@ -335,7 +346,7 @@ class VisionBridge:
             return render_video_context(cached)
 
         analysis = await analyze_video(
-            self.plugin._vision_client,
+            self._require_client(),
             video_file_path=video_source.local_path,
             video_url=video_source.url,
             file_unique=file_unique,
@@ -353,7 +364,7 @@ class VisionBridge:
             return None
 
         if vision.cache_enabled:
-            await self.plugin._vision_cache.put_video(
+            await cache.put_video(
                 file_unique,
                 vision.video_summary_model,
                 cache_version,
@@ -512,20 +523,20 @@ class VisionBridge:
             return []
         return [VideoSource(url=match.group(1).strip(), local_path=None)]
 
-    def _iter_segments(self, event, source_msg) -> list[dict[str, object]]:
+    def _iter_segments(self, event, source_msg) -> list[dict[str, Any]]:
         event_segments = getattr(event, "message", None) or []
         if event_segments:
-            result = []
+            result: list[dict[str, Any]] = []
             for segment in event_segments:
                 if hasattr(segment, "to_dict"):
-                    result.append(segment.to_dict())
+                    result.append(cast(dict[str, Any], segment.to_dict()))
                 elif isinstance(segment, dict):
-                    result.append(segment)
+                    result.append(cast(dict[str, Any], segment))
             if result:
                 return result
 
         message_segments = getattr(source_msg, "segments", []) or []
-        result = []
+        result: list[dict[str, Any]] = []
         for segment in message_segments:
             if getattr(segment, "segment_type", "") != "video":
                 continue
@@ -544,6 +555,21 @@ class VisionBridge:
     def _cache_version(self) -> str:
         vision = self.settings.vision
         return f"{vision.prompt_version}:{vision.schema_version}"
+
+    def _require_client(self) -> OpenAI:
+        client = self.plugin._vision_client
+        assert client is not None
+        return client
+
+    def _require_cache(self) -> VisionCacheStore:
+        cache = self.plugin._vision_cache
+        assert cache is not None
+        return cache
+
+    def _require_quota(self) -> VisionQuotaTracker:
+        quota = self.plugin._vision_quota
+        assert quota is not None
+        return quota
 
     @staticmethod
     def _image_file_size(image) -> int | None:
@@ -633,7 +659,7 @@ def _resize_image(
         return image.copy()
     width = max(min_side, int(image.width * scale))
     height = max(min_side, int(image.height * scale))
-    return image.resize((width, height), Image.LANCZOS)
+    return image.resize((width, height), Image.Resampling.LANCZOS)
 
 
 def _save_image(image: Image.Image, fmt: str, **kwargs) -> bytes:

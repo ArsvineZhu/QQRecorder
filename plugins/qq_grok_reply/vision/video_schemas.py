@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 
 from .schemas import (
@@ -222,10 +222,10 @@ def render_video_context(analysis: VideoAnalysis) -> str:
 
 
 def _convert_dataclass(value: Any) -> Any:
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return {
-            field_name: _convert_dataclass(field_value)
-            for field_name, field_value in asdict(value).items()
+            item.name: _convert_dataclass(getattr(value, item.name))
+            for item in fields(value)
         }
     if isinstance(value, list):
         return [_convert_dataclass(item) for item in value]

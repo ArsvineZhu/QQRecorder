@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 
 logger = logging.getLogger("qq_grok_reply.vision.schemas")
@@ -309,10 +309,10 @@ def _coerce_string_list(value: Any) -> list[str]:
 
 
 def _convert_dataclass(value: Any) -> Any:
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return {
-            field_name: _convert_dataclass(field_value)
-            for field_name, field_value in asdict(value).items()
+            item.name: _convert_dataclass(getattr(value, item.name))
+            for item in fields(value)
         }
     if isinstance(value, list):
         return [_convert_dataclass(item) for item in value]
