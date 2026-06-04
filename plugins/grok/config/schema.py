@@ -30,6 +30,7 @@ class ReadAfterWriteConfig:
 class AgentConfig:
     max_steps: int = 4
     max_tool_calls_per_turn: int = 3
+    max_tool_calls_total: int = 6
     max_evidence_chars: int = 6000
 
 

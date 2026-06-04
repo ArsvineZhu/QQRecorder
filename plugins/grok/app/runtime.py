@@ -82,6 +82,9 @@ class AgentRuntime:
             step_budget=int(getattr(self.plugin.settings.agent, "max_steps", 4) or 4),
         )
         steps: list[AgentStep] = []
+        max_tool_calls_total = _tool_call_total_budget(self.plugin.settings.agent)
+        executed_tool_calls = 0
+        executed_track_reply_keys: set[str] = set()
 
         for _ in range(working_context.step_budget):
             turn = await self._model_runner(
@@ -112,12 +115,75 @@ class AgentRuntime:
                     status="pending",
                     summary="",
                 )
+                if executed_tool_calls >= max_tool_calls_total:
+                    step.status = "skipped"
+                    step.summary = (
+                        f"工具调用总预算已用完（{max_tool_calls_total} 次），"
+                        "停止继续调用。"
+                    )
+                    steps.append(step)
+                    working_context.evidence.append(
+                        EvidenceBlock(
+                            kind="tool_error",
+                            label=tool_call.name,
+                            content=step.summary,
+                            source="runtime",
+                            metadata={"arguments": tool_call.arguments},
+                        )
+                    )
+                    logger.info(
+                        "runtime: global tool budget exceeded budget=%d tool=%s",
+                        max_tool_calls_total,
+                        tool_call.name,
+                    )
+                    return AgentOutcome(
+                        text="很抱歉，我这次需要查询的工具次数太多，先暂停以避免继续超限。",
+                        working_context=working_context,
+                        steps=steps,
+                        model_name=turn.model_name,
+                        error_code="tool_budget_exceeded",
+                    )
+
+                if tool_call.name == "track_reply":
+                    track_key = _track_reply_key(tool_call.arguments, source_msg)
+                    if track_key in executed_track_reply_keys:
+                        step.status = "skipped"
+                        step.summary = (
+                            "同一条引用链已经查询过，不再重复调用 track_reply。"
+                        )
+                        steps.append(step)
+                        working_context.evidence.append(
+                            EvidenceBlock(
+                                kind="tool_error",
+                                label=tool_call.name,
+                                content=step.summary,
+                                source="runtime",
+                                metadata={"arguments": tool_call.arguments},
+                            )
+                        )
+                        logger.info(
+                            "runtime: duplicate track_reply skipped key=%s",
+                            track_key,
+                        )
+                        return AgentOutcome(
+                            text=(
+                                "我已经查过这条回复链，记录里没有更多可用结果；"
+                                "请补充原消息内容，或我先按当前消息判断。"
+                            ),
+                            working_context=working_context,
+                            steps=steps,
+                            model_name=turn.model_name,
+                            error_code="duplicate_track_reply",
+                        )
+                    executed_track_reply_keys.add(track_key)
+
                 logger.info(
                     "runtime: execute tool=%s args=%s",
                     tool_call.name,
                     tool_call.arguments,
                 )
                 try:
+                    executed_tool_calls += 1
                     result = await self.registry.execute(
                         tool_call.name,
                         tool_call.arguments,
@@ -198,6 +264,30 @@ class AgentRuntime:
         registry.register(build_update_profile_tool(plugin))
         registry.register(build_delete_profile_tool(plugin))
         return registry
+
+
+def _tool_call_total_budget(agent_settings: Any) -> int:
+    configured = getattr(agent_settings, "max_tool_calls_total", None)
+    if configured is not None:
+        return max(1, int(configured))
+    max_steps = max(1, int(getattr(agent_settings, "max_steps", 4) or 4))
+    per_turn = max(1, int(getattr(agent_settings, "max_tool_calls_per_turn", 3) or 3))
+    return max_steps * per_turn
+
+
+def _track_reply_key(arguments: dict[str, Any], source_msg: Any) -> str:
+    message_id = str(
+        arguments.get("message_id")
+        or getattr(source_msg, "message_id", "")
+        or getattr(source_msg, "id", "")
+        or "current"
+    )
+    max_depth = str(arguments.get("max_depth") or 6)
+    return json.dumps(
+        {"message_id": message_id, "max_depth": max_depth},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
 
 
 def _chat_type(event) -> str:

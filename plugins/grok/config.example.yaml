@@ -36,6 +36,7 @@ read_after_write:
 agent:
   max_steps: 4                           # 最大 Agent 循环步数
   max_tool_calls_per_turn: 3             # 每轮最多并行工具调用数
+  max_tool_calls_total: 6                 # 单次回复最多执行工具调用数，防止工具循环超限
   max_evidence_chars: 6000               # 单条工具结果最大字符数（超出裁剪）
 
 # 提示词
