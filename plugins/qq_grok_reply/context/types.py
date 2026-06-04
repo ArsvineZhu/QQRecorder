@@ -28,3 +28,4 @@ class BuiltContext:
     topic_error_code: str = ""
     topic_fallback_used: bool = False
     topic_excluded_ids_json: str = "[]"
+    visual_context: str = ""

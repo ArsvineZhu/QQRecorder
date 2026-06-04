@@ -116,6 +116,55 @@ class LockRetryConfig:
 
 
 @dataclass
+class VisionConfig:
+    enabled: bool = False
+    dashscope_api_key: str = ""
+
+    # Phase 2: model routing (image_fast replaces Phase 1's single image_model)
+    image_fast_model: str = "qwen3-vl-flash"
+    image_detail_model: str = "qwen3-vl-plus"
+    image_deep_semantic_model: str = "qwen3.7-plus"
+    video_summary_model: str = "qwen3.6-flash"
+
+    # Common parameters
+    temperature: float = 0.4
+    timeout_sec: int = 20
+    # Size gating: source is the skip-above limit, api is the compress-to limit
+    source_image_bytes_threshold: int = 50 * 1024 * 1024
+    api_image_bytes_max: int = 10 * 1024 * 1024
+    max_images_per_message: int = 3
+    include_in_context: bool = True
+
+    # Cache
+    cache_enabled: bool = True
+    cache_ttl_days: int = 30
+    prompt_version: str = "visual_v1"
+    schema_version: str = "visual_semantic_json_v1"
+
+    # Quota
+    daily_limit_image_per_user_chat: int = 30
+    daily_limit_image_global: int = 500
+    daily_limit_video_per_user_chat: int = 3
+    daily_limit_video_global: int = 20
+
+    # Phase 2: routing
+    router_image_bytes_threshold: int = 1 * 1024 * 1024
+
+    # Phase 2: escalation
+    escalation_enabled: bool = True
+    escalation_min_confidence: float = 0.65
+    escalation_max_images_escalate: int = 1
+    escalation_detail_screenshot_types: list[str] = field(
+        default_factory=lambda: ["screenshot", "document"]
+    )
+
+    # Phase 2: video
+    video_max_duration_min: int = 30
+    video_max_bytes: int = 500 * 1024 * 1024
+    video_timeout_sec: int = 60
+
+
+@dataclass
 class ReplyPluginSettings:
     enabled: bool = False
     recorder_db: str = ""
@@ -125,6 +174,7 @@ class ReplyPluginSettings:
     read_after_write: ReadAfterWriteConfig = field(default_factory=ReadAfterWriteConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     topic_analyzer: TopicAnalyzerConfig = field(default_factory=TopicAnalyzerConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     cooldown: CooldownConfig = field(default_factory=CooldownConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     send: SendConfig = field(default_factory=SendConfig)

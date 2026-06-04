@@ -94,3 +94,41 @@ lock_retry:
   enabled: true
   max_retries: 5
   base_delay_ms: 50
+
+vision:
+  enabled: false
+  dashscope_api_key: ""
+  temperature: 0.4
+  timeout_sec: 20
+
+  # Model routing
+  image_fast_model: qwen3-vl-flash
+  image_detail_model: qwen3-vl-plus
+  image_deep_semantic_model: qwen3.7-plus
+  video_summary_model: qwen3.6-flash
+
+  # Size gating
+  source_image_bytes_threshold: 52428800     # 50MB — skip images larger than this
+  api_image_bytes_max: 10485760             # 10MB — compress to this before API
+
+  max_images_per_message: 3
+  include_in_context: true
+  cache_enabled: true
+  cache_ttl_days: 30
+  prompt_version: visual_v1
+  schema_version: visual_semantic_json_v1
+  daily_limit_image_per_user_chat: 30
+  daily_limit_image_global: 500
+
+  # Router
+  router_image_bytes_threshold: 1048576     # 1MB — use detail/semantic model if above
+
+  # Escalation
+  escalation_enabled: true
+  escalation_min_confidence: 0.65
+  escalation_max_images_escalate: 1
+
+  # Video
+  video_max_duration_min: 30
+  video_max_bytes: 524288000
+  video_timeout_sec: 60

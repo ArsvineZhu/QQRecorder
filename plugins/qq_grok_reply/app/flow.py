@@ -1,4 +1,5 @@
 import hashlib
+import pprint
 import time
 from typing import Any, cast
 
@@ -18,6 +19,7 @@ from ..shared import (
     sender_name,
 )
 from ..trigger import final_decision, prefilter_event
+from .vision_bridge import VisionBridge
 
 
 async def handle_event(plugin, event, chat_type: str) -> None:
@@ -30,6 +32,7 @@ class PluginFlow:
         self.settings = plugin.settings
         self.api = plugin.api
         self.logger = plugin.logger
+        self._vision_bridge = VisionBridge(plugin)
 
     async def handle(self, event, _chat_type: str) -> None:  # noqa: C901
         event_message_id = str(getattr(event, "message_id", "") or "")
@@ -106,6 +109,10 @@ class PluginFlow:
             return
 
         assert source_msg is not None
+
+        # Vision analysis (lightweight context, runs before build_context)
+        visual_context = await self._vision_bridge.build_context(source_msg, event)
+
         try:
             local_ctx = await resolve_awaitable(
                 build_context(
@@ -117,6 +124,7 @@ class PluginFlow:
                     sender_name=sender_name(event),
                     analyzer_api=self.api,
                     runtime_api=self.api,
+                    visual_context=visual_context,
                 )
             )
         except TopicContextError as exc:
@@ -493,8 +501,6 @@ class PluginFlow:
         if not self.settings.trace.log_runtime:
             return
         if self.settings.trace.pretty_print:
-            import pprint
-
             normalized = {
                 key: normalize_log_value(value, self.settings.trace.log_chars)
                 for key, value in payload.items()
