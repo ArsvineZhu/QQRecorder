@@ -1,5 +1,7 @@
 import asyncio
+import json
 
+from plugins.grok.infra.profile_json_store import ProfileJsonStore
 from plugins.grok.tools.profile_tools import load_profile
 
 
@@ -121,3 +123,27 @@ def test_load_profile_returns_username():
         load_profile(chat_type="group", chat_id="", user_id="40001", store=store)
     )
     assert result.data["username"] == "Zodiac"
+
+
+def test_profile_json_store_preserves_concurrent_upserts(tmp_path):
+    async def _run():
+        path = tmp_path / "profiles.json"
+        store = ProfileJsonStore(str(path))
+        await store.init_db()
+
+        await asyncio.gather(
+            *(
+                store.upsert_profile(str(index), {"user_id": str(index)})
+                for index in range(30)
+            )
+        )
+
+        all_profiles = await store.get_all()
+        await store.close()
+
+        assert set(all_profiles) == {str(index) for index in range(30)}
+        persisted = json.loads(path.read_text(encoding="utf-8"))
+        assert set(persisted["users"]) == {str(index) for index in range(30)}
+        assert not path.with_suffix(path.suffix + ".tmp").exists()
+
+    asyncio.run(_run())

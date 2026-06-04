@@ -102,7 +102,15 @@ def _extract_tool_calls(response) -> list[AgentToolCall]:
             continue
         arguments = _get_nested(function, ("arguments",))
         if isinstance(arguments, str):
-            payload = json.loads(arguments)
+            try:
+                payload = json.loads(arguments)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "model: skipped malformed tool call arguments tool=%s raw=%s",
+                    name,
+                    arguments[:1000],
+                )
+                continue
         else:
             payload = arguments or {}
         if not isinstance(payload, dict):

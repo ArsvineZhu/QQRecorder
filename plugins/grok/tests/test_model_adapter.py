@@ -96,6 +96,57 @@ def test_run_agent_turn_parses_tool_calls():
     assert "看看这个" in messages[1]["content"]
 
 
+def test_run_agent_turn_skips_malformed_tool_call_arguments():
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="load_profile",
+            description="Load the calling user's conversation preferences.",
+            schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"user_id": {"type": "string"}},
+                "required": ["user_id"],
+            },
+            handler=_noop_tool,
+        )
+    )
+    settings = build_config({"enabled": True, "recorder_db": "C:/tmp/recorder.db"})
+    api = SimpleNamespace(
+        ai=_FakeAIAPI(
+            response=SimpleNamespace(
+                model="demo",
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            tool_calls=[
+                                SimpleNamespace(
+                                    function=SimpleNamespace(
+                                        name="load_profile",
+                                        arguments='{"user_id":',
+                                    )
+                                )
+                            ]
+                        )
+                    )
+                ],
+            )
+        )
+    )
+
+    result = asyncio.run(
+        run_agent_turn(
+            api=api,
+            working_context=_working_context(),
+            settings=settings,
+            registry=registry,
+        )
+    )
+
+    assert result.tool_calls == []
+    assert result.text == ""
+
+
 def test_run_agent_turn_returns_final_text_without_tool_call():
     registry = ToolRegistry()
     settings = build_config({"enabled": True, "recorder_db": "C:/tmp/recorder.db"})
