@@ -16,19 +16,50 @@ class ForwardNode:
     forward_id: str = ""
 
 
+_SEGMENT_LABELS: dict[str, str] = {
+    "image": "[图片]",
+    "video": "[视频]",
+    "face": "[表情]",
+    "reply": "[回复]",
+    "forward": "[转发消息]",
+    "json": "[卡片消息]",
+    "file": "[文件]",
+    "record": "[语音]",
+    "location": "[位置]",
+    "music": "[音乐分享]",
+    "share": "[分享]",
+    "poke": "[戳一戳]",
+    "gift": "[礼物]",
+    "redbag": "[红包]",
+    "wallet": "[转账]",
+}
+
+
+def _segment_text(segment: dict) -> str:
+    """Convert a single forward segment to a text summary."""
+    seg_type = segment.get("type", "")
+    data = segment.get("data", {}) or {}
+    if seg_type == "text":
+        return data.get("text", "")
+    if label := _SEGMENT_LABELS.get(seg_type):
+        return label
+    if seg_type == "at":
+        uid = data.get("qq", "")
+        return f"@{uid}" if uid else "[@]"
+    if seg_type and seg_type != "node":
+        return f"[{seg_type}]"
+    return ""
+
+
 def extract_text_from_content(content) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = []
-        for segment in content:
-            if isinstance(segment, dict) and segment.get("type") == "text":
-                text = segment.get("data", {}).get("text", "")
-                if text:
-                    parts.append(text)
-        return "".join(parts)
+        return "".join(
+            _segment_text(segment) for segment in content if isinstance(segment, dict)
+        )
     return ""
 
 

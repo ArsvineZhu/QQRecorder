@@ -1,0 +1,136 @@
+# ============================================================
+# grok 插件配置（示例模板）
+# 复制为 config.yaml 后修改
+# ============================================================
+
+# 是否启用插件
+enabled: false
+
+# recorder 数据库的绝对路径（必填）
+recorder_db: "D:/absolute/path/to/recorder.db"
+
+# 是否监控所有群聊/私聊（覆盖 targets 限制）
+monitor_all: false
+
+# 目标聊天对象
+targets:
+  groups: ["30001"]        # 允许的群号列表
+  private: ["20001"]       # 允许的私聊 QQ 号列表
+
+# 触发规则
+trigger:
+  private_enabled: true                  # 是否响应私聊
+  group_enabled: true                    # 是否响应群聊
+  prefixes: ["/agent", "/ctx", "agent"]  # 群聊触发前缀
+  allow_at: true                         # 群聊 @bot 是否触发
+  allow_reply_to_bot: false              # 回复机器人上一条消息是否触发
+  ignore_self: true                      # 忽略自己发出的消息
+  ignore_recorder_command: true          # 忽略 recorder 命令（recorder/r/ 开头）
+
+# 读写一致性等待
+read_after_write:
+  timeout_ms: 320                        # 等待 recorder 写入完成的总超时（毫秒）
+  backoff_ms: [20, 40, 80, 160]          # 指数退避间隔（毫秒）
+
+# Agent 运行时
+agent:
+  max_steps: 4                           # 最大 Agent 循环步数
+  max_tool_calls_per_turn: 3             # 每轮最多并行工具调用数
+  max_tool_calls_total: 6                 # 单次回复最多执行工具调用数，防止工具循环超限
+  max_evidence_chars: 6000               # 单条工具结果最大字符数（超出裁剪）
+
+# 提示词
+prompt:
+  system_template_path: prompt/system.md # 系统提示词模板路径
+
+# 用户画像（JSON 数据库，插件启动时自动创建）
+profile:
+  db_path: "data/profiles.json"
+
+# 模型配置
+model:
+  provider: ncatbot_ai                   # 模型提供者
+  model: ""                              # 模型名（空串使用 root config.yaml 的 completion_model）
+  temperature: 0.7                       # 生成温度（思考模式下不生效）
+  max_tokens_group: 220                  # 群聊最大输出 token
+  max_tokens_private: 420                # 私聊最大输出 token
+  timeout_sec: 12                        # 调用超时（秒）
+  retries: 1                             # 失败重试次数
+  llm_concurrency: 2                     # 并发限制
+  thinking_enabled: false                # 是否开启思考模式
+  thinking_effort: high                  # 思考强度（high/max）
+
+# 发送策略
+send:
+  group_use_reply_segment: true          # 群聊回复是否带引用段
+  group_at_sender: false                 # 群聊回复是否 @ 发送者
+  group_max_chars_per_part: 250          # 群聊每段最大字符数
+  private_max_chars_per_part: 500        # 私聊每段最大字符数
+  group_max_parts: 2                     # 群聊最大分段数
+  private_max_parts: 3                   # 私聊最大分段数
+  retry_once: true                       # 发送失败是否重试一次
+
+# 追踪/审计
+trace:
+  enabled: true                          # 是否记录追踪
+  preview_chars: 240                     # 日志预览截断长度
+  log_runtime: true                      # 是否记录运行时日志
+  log_context_blocks: false              # 是否记录上下文块全文（较占空间）
+  log_chars: 4000                        # 上下文块日志截断长度
+  pretty_print: false                    # 是否美化日志输出
+  log_llm_chain: false                   # 是否输出完整 LLM 调用链（调试用）
+
+# 锁重试
+lock_retry:
+  enabled: true                          # 是否启用
+  max_retries: 5                         # 最大重试次数
+  base_delay_ms: 50                      # 基础退避间隔（毫秒）
+
+# 视觉分析（DashScope / 阿里云通义千问 VL）
+vision:
+  enabled: false                         # 是否启用视觉分析
+  dashscope_api_key: ""                  # DashScope API Key
+
+  # 视觉模型路由
+  image_fast_model: qwen3-vl-flash       # 快速图像分析模型
+  image_detail_model: qwen3-vl-plus      # 详细图像分析模型
+  image_deep_semantic_model: qwen3.7-plus  # 深度语义分析模型
+  video_summary_model: qwen3.6-flash     # 视频摘要模型
+
+  temperature: 0.4                       # 视觉模型生成温度
+  timeout_sec: 20                        # 视觉模型调用超时（秒）
+
+  # 大小门槛
+  source_image_bytes_threshold: 52428800  # 跳过超过此大小的源图（50MB）
+  api_image_bytes_max: 10485760          # 发送 API 前压缩到此大小以下（10MB）
+
+  max_images_per_message: 3              # 单条消息最多分析几张图
+  include_in_context: true               # 是否将视觉分析结果注入上下文
+
+  # 缓存
+  cache_enabled: true                    # 是否启用视觉分析结果缓存
+  cache_ttl_days: 30                     # 缓存有效期（天）
+  prompt_version: visual_v1              # 视觉提示词版本（缓存键组成部分）
+  schema_version: visual_semantic_json_v1  # 视觉 schema 版本（缓存键组成部分）
+
+  # 每日配额
+  daily_limit_image_per_user_chat: 30    # 每个用户/会话每日图像分析上限
+  daily_limit_image_global: 500          # 全局每日图像分析上限
+  daily_limit_video_per_user_chat: 3     # 每个用户/会话每日视频分析上限
+  daily_limit_video_global: 20           # 全局每日视频分析上限
+
+  # 升级路由
+  router_image_bytes_threshold: 1048576  # 超过此大小的图进入 detail/deep 模型（1MB）
+
+  # 升级策略
+  escalation_enabled: true               # 是否启用升级策略
+  escalation_min_confidence: 0.65        # 升级判定置信度阈值
+  escalation_max_images_escalate: 1      # 单次最多几张图升级
+  escalation_detail_screenshot_types:    # 触发升级的图片类型
+    - screenshot
+    - document
+
+  # 视频分析
+  video_max_duration_min: 30             # 跳过超过此时长的视频（分钟）
+  video_max_bytes: 524288000             # 跳过超过此大小的视频（500MB）
+  video_timeout_sec: 60                  # 视频分析超时（秒）

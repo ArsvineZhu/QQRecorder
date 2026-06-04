@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "message_id": {
+      "type": ["string", "null"],
+      "description": "锚点消息 ID。默认为当前触发消息。传空或不传表示从当前消息开始追踪。"
+    },
+    "max_depth": {
+      "type": "integer",
+      "description": "回复链最大追踪深度，默认 6。一般 2~3 层即可覆盖大部分引用链。不需要改。"
+    }
+  },
+  "required": [],
+  "description": "追踪当前消息回复的原始消息（引用链）。当用户的消息明确回复了前一条消息时调用。如果返回空，说明被回复的消息不在记录中或无法获取。"
+}

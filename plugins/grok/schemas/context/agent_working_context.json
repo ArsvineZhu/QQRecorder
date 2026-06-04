@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "chat_type": {
+      "type": "string"
+    },
+    "chat_id": {
+      "type": "string"
+    },
+    "user_id": {
+      "type": "string"
+    },
+    "current_message": {
+      "type": "string"
+    },
+    "trigger_reason": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "chat_type",
+    "chat_id",
+    "user_id",
+    "current_message",
+    "trigger_reason",
+    "evidence"
+  ]
+}

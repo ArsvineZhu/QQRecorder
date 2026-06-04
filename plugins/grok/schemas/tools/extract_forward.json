@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "message_id": {
+      "type": ["string", "null"],
+      "description": "含合并转发的消息 ID。默认为当前消息。传空或不传自动取当前消息。"
+    }
+  },
+  "required": [],
+  "description": "展开一条合并转发消息的内容。返回转发中各条消息的发送者昵称和内容摘要（非文本段会被标记为 [图片][视频][表情] 等）。适用于用户消息中包含「合并转发」的场景。"
+}

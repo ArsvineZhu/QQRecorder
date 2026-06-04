@@ -1,0 +1,42 @@
+{
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "user_id": {
+            "type": "string",
+            "description": "要更新档案的用户的账号 ID。"
+        },
+        "username": {
+            "type": "string",
+            "description": "更新当前用户的昵称。"
+        },
+        "preferred_name": {
+            "type": "string",
+            "description": "更新偏好称呼。"
+        },
+        "group_nickname": {
+            "type": "string",
+            "description": "当前群的群聊昵称。留空字符串清除该群昵称。不会影响其他群的设置。"
+        },
+        "group_instruction": {
+            "type": "string",
+            "description": "更新群聊对话指令。"
+        },
+        "private_instruction": {
+            "type": "string",
+            "description": "更新私聊对话指令。"
+        },
+        "language_style": {
+            "type": "string",
+            "description": "更新语言风格偏好。"
+        },
+        "habit_preferences": {
+            "type": "string",
+            "description": "更新习惯偏好列表，用逗号分隔。只传要更新的内容，不传的字段会保持原值。"
+        }
+    },
+    "required": [
+        "user_id"
+    ],
+    "description": "更新当前用户的档案信息。只覆盖传入的字段，不传的字段保留原值。例如只想改称呼就只传 user_id 和 preferred_name。适用于用户说「以后叫我XX」等场景。"
+}

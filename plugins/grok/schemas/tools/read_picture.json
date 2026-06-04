@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "message_id": {
+      "type": ["string", "null"],
+      "description": "包含图片的消息 ID。默认分析当前消息中的第一张图片。如果回复了一条带图片的消息，传那消息的 ID。"
+    }
+  },
+  "required": [],
+  "description": "分析一张图片的内容。通过视觉 AI 模型对图片进行解读，返回图片类型、画面概述、场景、可见物品/人物、识别到的文字、核心含义、语气倾向、隐私安全标记等。附带的用户消息文本也会一并返回。适用于用户发了图片、回复图片消息、或问「这是什么」的场景。"
+}

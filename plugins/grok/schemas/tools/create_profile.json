@@ -1,0 +1,42 @@
+{
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "user_id": {
+            "type": "string",
+            "description": "要创建档案的用户的账号 ID。"
+        },
+        "username": {
+            "type": "string",
+            "description": "当前用户的账号昵称，不是唯一标识。用于记住这个用户叫什么。"
+        },
+        "preferred_name": {
+            "type": "string",
+            "description": "用户偏好的称呼。应当以此名字称呼该用户。"
+        },
+        "group_nickname": {
+            "type": "string",
+            "description": "当前群的群聊昵称。仅在该群内生效。不同群可以有不同的昵称，互不影响。"
+        },
+        "group_instruction": {
+            "type": "string",
+            "description": "群聊对话指令。例如「技术问题先给结论」「少废话」等，在群聊中应当参考。"
+        },
+        "private_instruction": {
+            "type": "string",
+            "description": "私聊额外指令。仅在私聊中生效。"
+        },
+        "language_style": {
+            "type": "string",
+            "description": "语言风格偏好。例如「简洁直接」「详细严谨」。"
+        },
+        "habit_preferences": {
+            "type": "string",
+            "description": "习惯偏好列表，用逗号分隔。例如「少客套，喜欢举例」。"
+        }
+    },
+    "required": [
+        "user_id"
+    ],
+    "description": "为新用户创建一个档案。如果该用户已存在档案则返回现有的。档案存储在 JSON 文件中，不会写死到配置。新用户第一次对话时系统会自动创建空白档案，所以大部分场景不需要手动调此工具。"
+}

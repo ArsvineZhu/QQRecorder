@@ -1,0 +1,60 @@
+{
+    "image_type": "meme / sticker / real_photo / screenshot / document / mixed",
+    "literal_content": {
+        "summary": "图像表层内容总结",
+        "visible_objects": [
+            "可见物体"
+        ],
+        "visible_people": [
+            "可见人物或角色"
+        ],
+        "scene": "场景描述",
+        "ocr_text": [
+            "识别到的字符"
+        ]
+    },
+    "semantic_interpretation": {
+        "main_meaning": "这张图表达的含义",
+        "implied_message": "如果作为聊天消息，它可能想传达什么",
+        "meme_or_cultural_reference": "可能关联的梗/模板，不确定则为空字符串",
+        "text_image_relation": "图中文字和画面之间的关系"
+    },
+    "confidence": 0.0,
+    "affective_reading": {
+        "tone": [
+            {
+                "label": "无奈",
+                "intensity": 0.0
+            },
+            {
+                "label": "调侃",
+                "intensity": 0.0
+            },
+            {
+                "label": "疑惑",
+                "intensity": 0.0
+            }
+        ],
+        "evidence": "来自表情、文字、构图、上下文的依据"
+    },
+    "context_dependency": {
+        "requires_context": false,
+        "used_context": "参考了哪部分上下文；如果没有使用上下文则为空字符串",
+        "meaning_without_context": "只看图时的含义",
+        "meaning_with_context": "结合上下文后的含义变化；如果没有上下文则与 meaning_without_context 保持一致"
+    },
+    "uncertainty": {
+        "ambiguous_points": [
+            "不明确点"
+        ],
+        "possible_alternative_meanings": [
+            "可能表达的其他含义"
+        ]
+    },
+    "safety_and_privacy": {
+        "contains_face": false,
+        "contains_personal_info": false,
+        "contains_qr_or_barcode": false,
+        "contains_sensitive_document": false
+    }
+}

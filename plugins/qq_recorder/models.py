@@ -93,6 +93,9 @@ class Image(Base):
     sticker_confidence: Mapped[float] = mapped_column(Float, default=0.0)
 
     message: Mapped["Message"] = relationship("Message", back_populates="images")
+    analysis: Mapped["ImageAnalysis | None"] = relationship(
+        "ImageAnalysis", back_populates="image", uselist=False
+    )
 
 
 class Reply(Base):
@@ -153,6 +156,34 @@ class AppShare(Base):
     raw_data: Mapped[str] = mapped_column(Text, default="")
 
     message: Mapped["Message"] = relationship("Message", back_populates="app_shares")
+
+
+class ImageAnalysis(Base):
+    __tablename__ = "image_analyses"
+    __table_args__ = (
+        UniqueConstraint("file_unique", "model_used", name="_img_analysis_uc"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    image_id: Mapped[int | None] = mapped_column(ForeignKey("images.id"), nullable=True)
+    message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id"), nullable=True
+    )
+    file_unique: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    media_type: Mapped[str] = mapped_column(String, default="image")
+    model_used: Mapped[str] = mapped_column(String, default="")
+    analysis_json: Mapped[str] = mapped_column(Text, nullable=False)
+    image_type: Mapped[str] = mapped_column(String, default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    prompt_version: Mapped[str] = mapped_column(String, default="")
+    schema_version: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), onupdate=func.now()
+    )
+
+    image: Mapped["Image | None"] = relationship("Image", back_populates="analysis")
+    message: Mapped["Message | None"] = relationship("Message")
 
 
 class MonitoredChat(Base):
