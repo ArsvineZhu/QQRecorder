@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from plugins.qq_grok_reply.trace_store import TraceStore
+from plugins.qq_grok_reply.infra import TraceStore
 
 
 def test_trace_store_inserts_updates_and_deduplicates(tmp_path: Path):

@@ -4,7 +4,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import desc
 
-from .models import Base, ReplyTrace, init_engine
+from ..models import Base, ReplyTrace, init_engine
 
 _TOPIC_COLUMNS = {
     "topic_title": "VARCHAR DEFAULT ''",
@@ -110,6 +110,7 @@ class TraceStore:
         sent: bool,
         sent_message_id: str | None,
         sent_parts: int,
+        topic_error_code: str | None = None,
     ) -> None:
         async with self._session() as session:
             trace = await session.get(ReplyTrace, trace_id)
@@ -123,6 +124,38 @@ class TraceStore:
             trace.sent = sent
             trace.sent_message_id = sent_message_id
             trace.sent_parts = sent_parts
+            if topic_error_code is not None:
+                trace.topic_error_code = topic_error_code
+            await session.commit()
+
+    async def update_trace_context(
+        self,
+        trace_id: int,
+        *,
+        context_ids: list[str],
+        prompt_variant: str,
+        topic_title: str = "",
+        topic_summary: str = "",
+        topic_participants_json: str = "[]",
+        topic_selected_ids_json: str = "[]",
+        topic_candidate_count: int = 0,
+        topic_confidence: float = 0.0,
+        topic_error_code: str = "",
+        topic_fallback_used: bool = False,
+    ) -> None:
+        async with self._session() as session:
+            trace = await session.get(ReplyTrace, trace_id)
+            assert trace is not None, f"ReplyTrace {trace_id} does not exist"
+            trace.context_ids = json.dumps(context_ids, ensure_ascii=False)
+            trace.prompt_variant = prompt_variant
+            trace.topic_title = topic_title
+            trace.topic_summary = topic_summary
+            trace.topic_participants_json = topic_participants_json
+            trace.topic_selected_ids_json = topic_selected_ids_json
+            trace.topic_candidate_count = topic_candidate_count
+            trace.topic_confidence = topic_confidence
+            trace.topic_error_code = topic_error_code
+            trace.topic_fallback_used = topic_fallback_used
             await session.commit()
 
     async def get_by_source_message_id(

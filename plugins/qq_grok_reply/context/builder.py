@@ -1,11 +1,12 @@
 from typing import Any
 
-from .config import ReplyPluginSettings
-from .context_legacy_forward import (
+from ..config import ReplyPluginSettings
+from ..llm.topic_analyzer import TopicAnalysis, analyze_topic, validate_topic_analysis
+from .legacy_forward import (
     hydrate_legacy_forward_message,
     hydrate_legacy_forward_messages,
 )
-from .context_render import (
+from .render import (
     chronological_messages,
     current_message_text,
     display_name,
@@ -15,14 +16,11 @@ from .context_render import (
     render_forward_summary,
     render_line,
     render_message,
-    selected_ids_with_priority,
-    should_use_topic_ai,
     trim,
     trim_to_budget,
     unique,
 )
-from .context_types import BuiltContext, TopicContextError
-from .topic_analyzer import TopicAnalysis, analyze_topic, validate_topic_analysis
+from .types import BuiltContext, TopicContextError
 
 
 async def build_context(
@@ -36,19 +34,15 @@ async def build_context(
     analyzer_api=None,
     runtime_api=None,
 ) -> BuiltContext:
-    chat_type = str(source_msg.chat_type)
-    is_group = chat_type == "group"
-    if should_use_topic_ai(settings, analyzer_api):
-        return await _build_topic_context(
+    if settings.context.mode == "topic_ai":
+        return await _build_local_topic_context(
             source_msg,
             bridge,
             settings,
             event=event,
             trigger_reason=trigger_reason,
             sender_name=sender_name,
-            analyzer_api=analyzer_api,
             runtime_api=runtime_api,
-            is_group=is_group,
         )
     return await _build_recent_context(
         source_msg,
@@ -62,19 +56,24 @@ async def build_context(
     )
 
 
-async def _build_topic_context(
+async def expand_context(
     source_msg,
+    local_ctx: BuiltContext,
     bridge,
     settings: ReplyPluginSettings,
     *,
-    event,
-    trigger_reason: str,
-    sender_name: str | None,
-    analyzer_api,
-    runtime_api,
-    is_group: bool,
+    event=None,
+    trigger_reason: str = "",
+    sender_name: str | None = None,
+    analyzer_api=None,
+    runtime_api=None,
+    request_reason: str = "",
 ) -> BuiltContext:
+    if analyzer_api is None or not settings.topic_analyzer.enabled:
+        raise TopicContextError(TopicAnalysis(error_code="topic_analyzer_unavailable"))
+
     chat_type = str(source_msg.chat_type)
+    is_group = chat_type == "group"
     chat_id = str(source_msg.group_id if is_group else source_msg.user_id)
     candidate_limit = (
         settings.context.candidate_limit_group
@@ -91,66 +90,63 @@ async def _build_topic_context(
         if is_group
         else settings.context.selected_max_messages_private
     )
-
-    try:
-        candidates = await bridge.get_candidates(
-            chat_type,
-            chat_id,
-            limit=candidate_limit,
-            since_minutes=since_minutes,
-            before_or_at=getattr(source_msg, "timestamp", None),
-        )
-    except AttributeError:
-        candidates = await bridge.get_recent(chat_type, chat_id, candidate_limit)
-    except Exception as exc:
-        analysis = TopicAnalysis(error_code="topic_candidate_read_failed")
-        if not settings.topic_analyzer.fallback_to_recent:
-            raise TopicContextError(analysis) from exc
-        fallback = await _fallback_context(
-            source_msg,
-            bridge,
-            settings,
-            event,
-            trigger_reason,
-            sender_name,
-            is_group,
-            runtime_api,
-        )
-        fallback.topic_error_code = analysis.error_code
-        return fallback
+    quote_chain_depth = (
+        settings.context.quote_chain_max_depth_group
+        if is_group
+        else settings.context.quote_chain_max_depth_private
+    )
 
     source_msg = await hydrate_legacy_forward_message(source_msg, runtime_api, settings)
     assert source_msg is not None
+
+    candidates = await bridge.get_candidates(
+        chat_type,
+        chat_id,
+        limit=candidate_limit,
+        since_minutes=since_minutes,
+        before_or_at=getattr(source_msg, "timestamp", None),
+    )
     candidates = await hydrate_legacy_forward_messages(
         candidates, runtime_api, settings
     )
     candidate_by_id = {str(message.message_id): message for message in candidates}
     current_id = str(source_msg.message_id)
-    if current_id not in candidate_by_id:
-        candidates.insert(0, source_msg)
-        candidate_by_id[current_id] = source_msg
+    candidate_by_id[current_id] = source_msg
+
+    for message_id in local_ctx.context_ids:
+        if message_id in candidate_by_id:
+            continue
+        message = await bridge.get_message(message_id)
+        if message is None:
+            continue
+        message = await hydrate_legacy_forward_message(message, runtime_api, settings)
+        candidate_by_id[message_id] = message
+
+    reply_chain = await bridge.get_reply_chain(source_msg, max_depth=quote_chain_depth)
+    reply_chain = await hydrate_legacy_forward_messages(
+        reply_chain, runtime_api, settings
+    )
+    for message in reply_chain:
+        candidate_by_id[str(message.message_id)] = message
 
     reply_to_id = first_reply_id(source_msg)
-    if reply_to_id and reply_to_id not in candidate_by_id:
-        quoted_msg = await bridge.get_message(reply_to_id)
-        if quoted_msg is not None:
-            quoted_msg = await hydrate_legacy_forward_message(
-                quoted_msg, runtime_api, settings
-            )
-            candidates.append(quoted_msg)
-            candidate_by_id[reply_to_id] = quoted_msg
-
     current_text = current_message_text(event, source_msg, settings, trigger_reason)
-    payload = _topic_payload(
-        source_msg,
-        candidates,
-        settings,
-        current_text=current_text,
-        current_sender=sender_name or display_name(source_msg),
-        reply_to_id=reply_to_id,
-        max_selected=max_selected,
+    analysis = await analyze_topic(
+        analyzer_api,
+        payload=_topic_payload(
+            source_msg,
+            list(candidate_by_id.values()),
+            settings,
+            current_text=current_text,
+            current_sender=sender_name or display_name(source_msg),
+            reply_to_id=reply_to_id,
+            max_selected=max_selected,
+            anchor_message_ids=local_ctx.context_ids,
+            quote_chain_ids=[str(message.message_id) for message in reply_chain],
+            request_reason=request_reason,
+        ),
+        settings=settings,
     )
-    analysis = await analyze_topic(analyzer_api, payload=payload, settings=settings)
     analysis = validate_topic_analysis(
         analysis,
         candidate_ids=set(candidate_by_id),
@@ -159,75 +155,128 @@ async def _build_topic_context(
     )
     analysis.candidate_count = len(candidate_by_id)
     if analysis.error_code:
-        if not settings.topic_analyzer.fallback_to_recent:
-            raise TopicContextError(analysis)
-        fallback = await _fallback_context(
-            source_msg,
-            bridge,
-            settings,
-            event,
-            trigger_reason,
-            sender_name,
-            is_group,
-            runtime_api,
-        )
-        fallback.topic_title = analysis.topic_title
-        fallback.topic_summary = analysis.topic_summary
-        fallback.topic_confidence = analysis.confidence
-        fallback.topic_candidate_count = analysis.candidate_count
-        fallback.topic_error_code = analysis.error_code
-        fallback.topic_fallback_used = True
-        fallback.topic_excluded_ids_json = analysis.excluded_ids_json()
-        return fallback
+        raise TopicContextError(analysis)
 
-    selected_ids = selected_ids_with_priority(
-        analysis.selected_message_ids,
-        current_id=current_id,
-        reply_to_id=reply_to_id,
-        max_selected=max_selected,
+    context_ids = _merge_expanded_ids(
+        local_ctx.context_ids, analysis.selected_message_ids
     )
-    selected_messages = chronological_messages(
-        [candidate_by_id[item] for item in selected_ids if item in candidate_by_id]
+    quote_chain_ids = {str(item.message_id) for item in reply_chain}
+    recent_messages = chronological_messages(
+        [
+            candidate_by_id[message_id]
+            for message_id in context_ids
+            if message_id in candidate_by_id
+            and message_id != current_id
+            and message_id not in quote_chain_ids
+        ]
     )
     return _assemble_context(
         source_msg,
-        selected_messages,
-        settings,
+        quoted_messages=reply_chain,
+        recent_messages=recent_messages,
+        settings=settings,
         event=event,
         trigger_reason=trigger_reason,
         sender_name=sender_name,
-        quoted_msg=candidate_by_id.get(reply_to_id or ""),
         analysis=analysis,
+        context_id_order=context_ids,
+        variant_override="group_topic_expanded"
+        if is_group
+        else "private_topic_expanded",
     )
 
 
-async def _fallback_context(
+async def _build_local_topic_context(
     source_msg,
     bridge,
     settings: ReplyPluginSettings,
+    *,
     event,
     trigger_reason: str,
     sender_name: str | None,
-    is_group: bool,
     runtime_api,
 ) -> BuiltContext:
+    source_msg = await hydrate_legacy_forward_message(source_msg, runtime_api, settings)
+    assert source_msg is not None
+
+    chat_type = str(source_msg.chat_type)
+    is_group = chat_type == "group"
+    chat_id = str(source_msg.group_id if is_group else source_msg.user_id)
     recent_limit = (
-        settings.context.fallback_recent_limit_group
+        settings.context.local_recent_limit_group
         if is_group
-        else settings.context.fallback_recent_limit_private
+        else settings.context.local_recent_limit_private
     )
-    built = await _build_recent_context(
+    recent_window_minutes = (
+        settings.context.local_recent_time_window_minutes_group
+        if is_group
+        else settings.context.local_recent_time_window_minutes_private
+    )
+    quote_chain_depth = (
+        settings.context.quote_chain_max_depth_group
+        if is_group
+        else settings.context.quote_chain_max_depth_private
+    )
+    neighbor_limit = (
+        settings.context.quote_neighbor_limit_group
+        if is_group
+        else settings.context.quote_neighbor_limit_private
+    )
+
+    reply_chain = await bridge.get_reply_chain(source_msg, max_depth=quote_chain_depth)
+    reply_chain = await hydrate_legacy_forward_messages(
+        reply_chain, runtime_api, settings
+    )
+    recent_messages = await bridge.get_recent_window(
+        chat_type,
+        chat_id,
+        limit=recent_limit,
+        since_minutes=recent_window_minutes,
+        before_or_at=getattr(source_msg, "timestamp", None),
+    )
+    recent_messages = await hydrate_legacy_forward_messages(
+        recent_messages, runtime_api, settings
+    )
+
+    neighbor_messages: list[Any] = []
+    for quoted_message in reply_chain:
+        items = await bridge.get_neighbors(
+            chat_type,
+            chat_id,
+            anchor=quoted_message,
+            before_limit=neighbor_limit,
+            after_limit=neighbor_limit,
+        )
+        neighbor_messages.extend(items)
+    neighbor_messages = await hydrate_legacy_forward_messages(
+        neighbor_messages, runtime_api, settings
+    )
+
+    chain_id_order = [str(message.message_id) for message in reply_chain]
+    chain_ids = set(chain_id_order)
+    recent_selected: list[Any] = []
+    for message in chronological_messages(recent_messages + neighbor_messages):
+        message_id = str(message.message_id)
+        if message_id == str(source_msg.message_id) or message_id in chain_ids:
+            continue
+        recent_selected.append(message)
+
+    context_ids = unique(
+        [str(source_msg.message_id), *chain_id_order]
+        + [str(message.message_id) for message in recent_selected]
+    )
+    return _assemble_context(
         source_msg,
-        bridge,
-        settings,
+        quoted_messages=reply_chain,
+        recent_messages=recent_selected,
+        settings=settings,
         event=event,
         trigger_reason=trigger_reason,
         sender_name=sender_name,
-        recent_limit_override=recent_limit,
-        runtime_api=runtime_api,
+        analysis=None,
+        context_id_order=context_ids,
+        variant_override="group_topic_local" if is_group else "private_topic_local",
     )
-    built.topic_fallback_used = True
-    return built
 
 
 async def _build_recent_context(
@@ -259,6 +308,7 @@ async def _build_recent_context(
     recent_messages = await hydrate_legacy_forward_messages(
         recent_messages, runtime_api, settings
     )
+
     recent_selected = []
     for message in recent_messages:
         message_id = str(message.message_id)
@@ -267,28 +317,33 @@ async def _build_recent_context(
         recent_selected.append(message)
         if len(recent_selected) >= recent_limit:
             break
+
     return _assemble_context(
         source_msg,
-        chronological_messages(recent_selected),
-        settings,
+        quoted_messages=[quoted_msg] if quoted_msg is not None else [],
+        recent_messages=chronological_messages(recent_selected),
+        settings=settings,
         event=event,
         trigger_reason=trigger_reason,
         sender_name=sender_name,
-        quoted_msg=quoted_msg,
         analysis=None,
+        context_id_order=None,
+        variant_override=None,
     )
 
 
 def _assemble_context(
     source_msg,
+    *,
+    quoted_messages: list[Any],
     recent_messages: list[Any],
     settings: ReplyPluginSettings,
-    *,
     event,
     trigger_reason: str,
     sender_name: str | None,
-    quoted_msg,
     analysis: TopicAnalysis | None,
+    context_id_order: list[str] | None,
+    variant_override: str | None,
 ) -> BuiltContext:
     chat_type = str(source_msg.chat_type)
     is_group = chat_type == "group"
@@ -308,30 +363,28 @@ def _assemble_context(
         else settings.context.recent_chars_private
     )
 
-    quoted_block = ""
-    context_ids: list[str] = [str(source_msg.message_id)]
-    if quoted_msg is not None:
-        quoted_block = trim(
-            render_line(
-                quoted_msg, sender_name=display_name(quoted_msg), settings=settings
-            ),
-            quote_chars,
-        )
-        context_ids.append(str(quoted_msg.message_id))
+    quoted_lines = [
+        render_line(message, sender_name=display_name(message), settings=settings)
+        for message in quoted_messages
+        if message is not None
+    ]
+    quoted_block = trim_to_budget("\n".join(quoted_lines), quote_chars)
 
+    quoted_ids = {
+        str(message.message_id) for message in quoted_messages if message is not None
+    }
     recent_lines: list[str] = []
-    for message in recent_messages:
+    recent_ids: list[str] = []
+    for message in chronological_messages(recent_messages):
         message_id = str(message.message_id)
-        if message_id == str(source_msg.message_id):
-            continue
-        if quoted_msg is not None and message_id == str(quoted_msg.message_id):
+        if message_id == str(source_msg.message_id) or message_id in quoted_ids:
             continue
         rendered = trim(
             render_line(message, sender_name=display_name(message), settings=settings),
             recent_chars + settings.context.forward_max_chars + 32,
         )
         recent_lines.append(rendered)
-        context_ids.append(message_id)
+        recent_ids.append(message_id)
 
     current_text = current_message_text(event, source_msg, settings, trigger_reason)
     current_sender = sender_name or display_name(source_msg)
@@ -356,14 +409,26 @@ def _assemble_context(
             if item.name
         ]
 
+    context_ids = context_id_order or unique(
+        [str(source_msg.message_id)]
+        + [
+            str(message.message_id)
+            for message in quoted_messages
+            if message is not None
+        ]
+        + recent_ids
+    )
+    variant = variant_override or (
+        "group_topic_expanded"
+        if is_group and analysis
+        else ("group_compact" if is_group else "private_contextual")
+    )
     return BuiltContext(
-        context_ids=unique(context_ids),
+        context_ids=context_ids,
         quoted_block=quoted_block,
         recent_block=recent_block,
         current_block=current_block[:total_chars],
-        variant="group_topic_ai"
-        if is_group and analysis
-        else ("group_compact" if is_group else "private_contextual"),
+        variant=variant,
         chat_type=chat_type,
         trigger_reason=trigger_reason,
         current_time=format_full_time(getattr(source_msg, "timestamp", None)),
@@ -388,12 +453,16 @@ def _topic_payload(
     current_sender: str,
     reply_to_id: str | None,
     max_selected: int,
+    anchor_message_ids: list[str],
+    quote_chain_ids: list[str],
+    request_reason: str,
 ) -> dict[str, Any]:
     candidate_items = []
-    for message in reversed(candidates):
+    for message in chronological_messages(candidates):
+        message_id = str(message.message_id)
         candidate_items.append(
             {
-                "id": str(message.message_id),
+                "id": message_id,
                 "sender_id": str(getattr(message, "user_id", "") or ""),
                 "sender_name": display_name(message),
                 "time": format_full_time(getattr(message, "timestamp", None)),
@@ -413,4 +482,11 @@ def _topic_payload(
         "candidate_messages": candidate_items,
         "max_select_messages": max_selected,
         "max_summary_chars": settings.topic_analyzer.max_summary_chars,
+        "anchor_message_ids": anchor_message_ids,
+        "quote_chain_message_ids": quote_chain_ids,
+        "request_reason": request_reason,
     }
+
+
+def _merge_expanded_ids(local_ids: list[str], selected_ids: list[str]) -> list[str]:
+    return unique(local_ids + [str(item) for item in selected_ids])

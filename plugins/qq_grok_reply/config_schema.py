@@ -31,6 +31,14 @@ class ContextConfig:
     mode: str = "topic_ai"
     recent_limit_group: int = 6
     recent_limit_private: int = 10
+    local_recent_limit_group: int = 30
+    local_recent_limit_private: int = 30
+    local_recent_time_window_minutes_group: int = 30
+    local_recent_time_window_minutes_private: int = 30
+    quote_chain_max_depth_group: int = 10
+    quote_chain_max_depth_private: int = 10
+    quote_neighbor_limit_group: int = 10
+    quote_neighbor_limit_private: int = 10
     quote_chars_group: int = 320
     quote_chars_private: int = 480
     total_chars_group: int = 6000
@@ -97,6 +105,7 @@ class TraceConfig:
     log_runtime: bool = True
     log_context_blocks: bool = False
     log_chars: int = 4000
+    pretty_print: bool = False
 
 
 @dataclass

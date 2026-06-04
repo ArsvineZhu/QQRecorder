@@ -1,4 +1,4 @@
-from plugins.qq_grok_reply.text_splitter import split_text
+from plugins.qq_grok_reply.delivery import split_text
 
 
 def test_split_text_returns_single_chunk_for_short_input():

@@ -1,5 +1,5 @@
 name = "qq_grok_reply"
-version = "0.1.0"
+version = "1.0.0"
 main = "plugin.py"
 entry_class = "QQGrokReplyPlugin"
 author = "Arsvine Zhu"

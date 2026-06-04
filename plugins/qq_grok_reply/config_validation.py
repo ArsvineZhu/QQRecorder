@@ -101,6 +101,19 @@ def _validate_lock_retry(settings: ReplyPluginSettings) -> None:
 
 
 def _validate_topic_limits(settings: ReplyPluginSettings) -> None:
+    local_context_numbers = (
+        settings.context.local_recent_limit_group,
+        settings.context.local_recent_limit_private,
+        settings.context.local_recent_time_window_minutes_group,
+        settings.context.local_recent_time_window_minutes_private,
+        settings.context.quote_chain_max_depth_group,
+        settings.context.quote_chain_max_depth_private,
+        settings.context.quote_neighbor_limit_group,
+        settings.context.quote_neighbor_limit_private,
+    )
+    if any(value <= 0 for value in local_context_numbers):
+        raise ValueError("local topic context limits must be > 0")
+
     context_numbers = (
         settings.context.candidate_limit_group,
         settings.context.candidate_limit_private,

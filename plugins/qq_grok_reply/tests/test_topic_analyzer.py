@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from plugins.qq_grok_reply.config import build_config
-from plugins.qq_grok_reply.topic_analyzer import analyze_topic
+from plugins.qq_grok_reply.llm import analyze_topic
 
 
 class _DictResponseAIAPI:

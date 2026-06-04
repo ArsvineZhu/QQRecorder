@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from plugins.qq_grok_reply.config import build_config
-from plugins.qq_grok_reply.sender import send_reply
+from plugins.qq_grok_reply.delivery import send_reply
 
 
 class _FakeQQAPI:

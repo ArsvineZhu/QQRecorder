@@ -1,75 +1,77 @@
 import asyncio
+import json
 from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
 
 from plugins.qq_grok_reply.config import build_config
-from plugins.qq_grok_reply.context_builder import TopicContextError, build_context
+from plugins.qq_grok_reply.context import (
+    BuiltContext,
+    TopicContextError,
+    build_context,
+    expand_context,
+)
 
 
 class _BridgeStub:
-    def __init__(self, quote_message, recent_messages):
+    def __init__(
+        self,
+        quote_message,
+        recent_messages,
+        *,
+        messages_by_id=None,
+        reply_chain=None,
+        neighbor_map=None,
+        candidate_messages=None,
+    ):
         self.quote_message = quote_message
         self.recent_messages = recent_messages
+        self.messages_by_id = messages_by_id or {}
+        self.reply_chain = reply_chain or []
+        self.neighbor_map = neighbor_map or {}
+        self.candidate_messages = candidate_messages or recent_messages
 
     async def get_message(self, _message_id: str):
-        return self.quote_message
+        return self.messages_by_id.get(_message_id, self.quote_message)
 
     async def get_recent(self, _chat_type: str, _chat_id: str, _limit: int):
         return self.recent_messages
 
-    async def get_candidates(self, _chat_type: str, _chat_id: str, **_kwargs):
+    async def get_recent_window(self, _chat_type: str, _chat_id: str, **_kwargs):
         return self.recent_messages
+
+    async def get_candidates(self, _chat_type: str, _chat_id: str, **_kwargs):
+        return self.candidate_messages
+
+    async def get_reply_chain(self, _source_msg, *, max_depth: int):
+        return self.reply_chain[:max_depth]
+
+    async def get_neighbors(
+        self,
+        _chat_type: str,
+        _chat_id: str,
+        *,
+        anchor,
+        before_limit: int,
+        after_limit: int,
+    ):
+        items = list(self.neighbor_map.get(str(anchor.message_id), []))
+        return items[: before_limit + after_limit]
 
 
 class _FakeAIAPI:
-    def __init__(self, content: str):
-        self.content = content
+    def __init__(self, tool_arguments: str):
+        self.tool_arguments = tool_arguments
         self.calls = []
 
     async def chat(self, messages, **kwargs):
         self.calls.append((messages, kwargs))
         return SimpleNamespace(
             choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(
-                        content=self.content,
-                    )
-                )
+                SimpleNamespace(message=SimpleNamespace(content=self.tool_arguments))
             ]
         )
-
-
-class _FakeRuntimeAPI:
-    class qq:
-        class query:
-            @staticmethod
-            async def get_forward_msg(_forward_id: str):
-                return {
-                    "messages": [
-                        {
-                            "type": "node",
-                            "data": {
-                                "user_id": "30001",
-                                "nickname": "甲",
-                                "content": [
-                                    {"type": "text", "data": {"text": "第一条转发内容"}}
-                                ],
-                            },
-                        },
-                        {
-                            "type": "node",
-                            "data": {
-                                "user_id": "30002",
-                                "nickname": "乙",
-                                "content": [
-                                    {"type": "text", "data": {"text": "第二条转发内容"}}
-                                ],
-                            },
-                        },
-                    ]
-                }
 
 
 def _message(
@@ -90,6 +92,8 @@ def _message(
     sender_nickname: str | None = None,
     sender_card: str | None = None,
     forward_messages=None,
+    segments=None,
+    images=None,
 ):
     replies = []
     if reply_to:
@@ -115,6 +119,16 @@ def _message(
         sender_nickname=sender_nickname,
         sender_card=sender_card,
         forward_messages=forward_messages or [],
+        segments=segments or [],
+        images=images or [],
+    )
+
+
+def _segment(segment_type: str, data: dict, order: int):
+    return SimpleNamespace(
+        segment_type=segment_type,
+        segment_data=json.dumps(data, ensure_ascii=False),
+        segment_order=order,
     )
 
 
@@ -123,7 +137,7 @@ def test_build_context_unescapes_text_and_collects_context_ids():
         {
             "enabled": True,
             "recorder_db": "C:/tmp/recorder.db",
-            "context": {"recent_limit_group": 3},
+            "context": {"mode": "recent", "recent_limit_group": 3},
         }
     )
     source = _message(
@@ -135,9 +149,34 @@ def test_build_context_unescapes_text_and_collects_context_ids():
     quote = _message("m-quote", raw_message="引用\\n内容", sender_nickname="小明")
     recent = [
         source,
-        _message("m-image", raw_message="", has_image=True, sender_nickname="图图"),
         _message(
-            "m-forward", raw_message="", has_forward=True, sender_nickname="转发者"
+            "m-image",
+            raw_message="",
+            has_image=True,
+            sender_nickname="图图",
+            segments=[_segment("image", {"url": "https://example.com/a.png"}, 0)],
+            images=[
+                SimpleNamespace(
+                    file_size=0,
+                    width=320,
+                    height=240,
+                    downloaded=False,
+                    is_sticker=False,
+                    file_url="https://example.com/a.png",
+                )
+            ],
+        ),
+        _message(
+            "m-forward",
+            raw_message="",
+            has_forward=True,
+            sender_nickname="转发者",
+            segments=[_segment("forward", {"id": "fw-1"}, 0)],
+            forward_messages=[
+                SimpleNamespace(
+                    id=1, depth=0, nickname="A", content_summary="转发里的第一句"
+                )
+            ],
         ),
     ]
 
@@ -157,111 +196,9 @@ def test_build_context_unescapes_text_and_collects_context_ids():
     assert built.context_ids == ["m-current", "m-quote", "m-image", "m-forward"]
     assert "[12:30] Arsvine: 当前\n消息" in built.current_block
     assert "[12:30] 小明: 引用\n内容" in built.quoted_block
-    assert "[12:30] 图图: [图片]" in built.recent_block
-    assert "[12:30] 转发者: [合并转发]" in built.recent_block
-
-
-def test_build_context_quote_forward_prefers_forward_summary_over_cq_code():
-    settings = build_config(
-        {
-            "enabled": True,
-            "recorder_db": "C:/tmp/recorder.db",
-            "context": {
-                "quote_chars_group": 300,
-                "forward_max_items": 2,
-                "forward_max_chars": 160,
-            },
-        }
-    )
-    source = _message(
-        "m-current",
-        raw_message="评价一下",
-        reply_to="m-forward-quote",
-        sender_card="Arsvine",
-    )
-    quote = _message(
-        "m-forward-quote",
-        raw_message="[CQ:forward,id=123456,content=foo]",
-        has_forward=True,
-        sender_nickname="转发者",
-        forward_messages=[
-            SimpleNamespace(id=1, depth=0, nickname="A", content_summary="第一条观点"),
-            SimpleNamespace(id=2, depth=0, nickname="B", content_summary="第二条观点"),
-        ],
-    )
-
-    built = asyncio.run(build_context(source, _BridgeStub(quote, [source]), settings))
-
-    assert "[CQ:forward" not in built.quoted_block
-    assert "[12:30] 转发者: [合并转发]" in built.quoted_block
-    assert "合并转发摘要" in built.quoted_block
-    assert "A：第一条观点" in built.quoted_block
-
-
-def test_build_context_quote_legacy_forward_cq_renders_forward_placeholder():
-    settings = build_config(
-        {
-            "enabled": True,
-            "recorder_db": "C:/tmp/recorder.db",
-        }
-    )
-    source = _message(
-        "m-current",
-        raw_message="能看到吗",
-        chat_type="private",
-        group_id=None,
-        reply_to="m-legacy-forward",
-    )
-    quote = _message(
-        "m-legacy-forward",
-        raw_message="[CQ:forward,id=123456,content=foo]",
-        chat_type="private",
-        group_id=None,
-        has_forward=False,
-        sender_nickname="Zodiac",
-    )
-
-    built = asyncio.run(build_context(source, _BridgeStub(quote, [source]), settings))
-
-    assert built.quoted_block == "[12:30] Zodiac: [合并转发]"
-
-
-def test_legacy_forward_quote_fetches_summary_when_api_available():
-    settings = build_config(
-        {
-            "enabled": True,
-            "recorder_db": "C:/tmp/recorder.db",
-            "context": {"forward_max_items": 2, "forward_max_chars": 200},
-        }
-    )
-    source = _message(
-        "m-current",
-        raw_message="这个你怎么看",
-        chat_type="private",
-        group_id=None,
-        reply_to="m-legacy-forward",
-    )
-    quote = _message(
-        "m-legacy-forward",
-        raw_message="[CQ:forward,id=123456,content=foo]",
-        chat_type="private",
-        group_id=None,
-        has_forward=False,
-        sender_nickname="Zodiac",
-    )
-
-    built = asyncio.run(
-        build_context(
-            source,
-            _BridgeStub(quote, [source]),
-            settings,
-            runtime_api=_FakeRuntimeAPI(),
-        )
-    )
-
-    assert "[12:30] Zodiac: [合并转发]" in built.quoted_block
-    assert "合并转发摘要" in built.quoted_block
-    assert "甲：第一条转发内容" in built.quoted_block
+    assert "[12:30] 图图: [图片: 320x240" in built.recent_block
+    assert "[12:30] 转发者: 合并转发摘要：" in built.recent_block
+    assert "A：转发里的第一句" in built.recent_block
 
 
 def test_build_context_respects_private_budget_and_recent_limit():
@@ -273,6 +210,7 @@ def test_build_context_respects_private_budget_and_recent_limit():
                 "recent_limit_private": 2,
                 "total_chars_private": 60,
                 "quote_chars_private": 20,
+                "mode": "recent",
             },
         }
     )
@@ -350,6 +288,86 @@ def test_build_context_recent_messages_are_chronological():
     assert built.recent_block.index("[12:28]") < built.recent_block.index("[12:29]")
 
 
+def test_build_context_topic_ai_uses_local_window_and_quote_neighbors_only():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "context": {
+                "mode": "topic_ai",
+                "local_recent_limit_group": 30,
+                "local_recent_time_window_minutes_group": 30,
+                "quote_chain_max_depth_group": 10,
+                "quote_neighbor_limit_group": 2,
+                "recent_chars_group": 500,
+            },
+        }
+    )
+    source = _message(
+        "m-current",
+        raw_message="我是在追问这个报价吗",
+        reply_to="m-q2",
+        timestamp=datetime(2024, 6, 2, 12, 30),
+    )
+    quote_1 = _message(
+        "m-q1",
+        raw_message="最早的报价",
+        timestamp=datetime(2024, 6, 2, 12, 20),
+    )
+    quote_2 = _message(
+        "m-q2",
+        raw_message="上一条追问",
+        reply_to="m-q1",
+        timestamp=datetime(2024, 6, 2, 12, 25),
+    )
+    before = _message(
+        "m-before",
+        raw_message="补充背景",
+        timestamp=datetime(2024, 6, 2, 12, 19),
+    )
+    after = _message(
+        "m-after",
+        raw_message="继续展开",
+        timestamp=datetime(2024, 6, 2, 12, 26),
+    )
+    recent = [
+        source,
+        _message("m-r2", raw_message="最近两", timestamp=datetime(2024, 6, 2, 12, 29)),
+        _message("m-r1", raw_message="最近一", timestamp=datetime(2024, 6, 2, 12, 28)),
+    ]
+    api = SimpleNamespace(ai=_FakeAIAPI('{"ignored":true}'))
+
+    built = asyncio.run(
+        build_context(
+            source,
+            _BridgeStub(
+                quote_2,
+                recent,
+                messages_by_id={"m-q1": quote_1, "m-q2": quote_2},
+                reply_chain=[quote_2, quote_1],
+                neighbor_map={"m-q1": [before], "m-q2": [after]},
+            ),
+            settings,
+            analyzer_api=api,
+        )
+    )
+
+    assert api.ai.calls == []
+    assert built.variant == "group_topic_local"
+    assert built.topic_summary == ""
+    assert built.context_ids == [
+        "m-current",
+        "m-q2",
+        "m-q1",
+        "m-before",
+        "m-after",
+        "m-r1",
+        "m-r2",
+    ]
+    assert built.recent_block.index("[12:19]") < built.recent_block.index("[12:26]")
+    assert built.recent_block.index("[12:26]") < built.recent_block.index("[12:28]")
+
+
 def test_build_context_renders_share_placeholder_with_title_or_app_name():
     settings = build_config(
         {
@@ -363,6 +381,10 @@ def test_build_context_renders_share_placeholder_with_title_or_app_name():
         has_app_share=True,
         app_share_title="阶段一设计",
         sender_card="Arsvine",
+        segments=[
+            _segment("text", {"text": "看这个"}, 0),
+            _segment("json", {"data": '{"desc":"QQ卡片"}'}, 1),
+        ],
     )
     recent = [
         source,
@@ -372,6 +394,7 @@ def test_build_context_renders_share_placeholder_with_title_or_app_name():
             has_app_share=True,
             app_share_name="B站",
             sender_nickname="分享者",
+            segments=[_segment("json", {"data": '{"desc":"QQ卡片"}'}, 0)],
         ),
     ]
 
@@ -381,11 +404,46 @@ def test_build_context_renders_share_placeholder_with_title_or_app_name():
         )
     )
 
-    assert "[12:30] Arsvine: 看这个 [分享: 阶段一设计]" == built.current_block
-    assert "[12:30] 分享者: [分享: B站]" == built.recent_block
+    assert built.current_block == "[12:30] Arsvine: 看这个 阶段一设计"
+    assert built.recent_block == "[12:30] 分享者: B站"
 
 
-def test_build_context_topic_ai_selects_related_messages_and_forward_summary():
+def test_build_context_current_block_strips_prefix_and_keeps_structured_segments():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "context": {"mode": "recent", "recent_limit_group": 1},
+        }
+    )
+    source = _message(
+        "m-current",
+        raw_message="/ask 看这个",
+        has_app_share=True,
+        segments=[
+            _segment("text", {"text": "/ask 看这个"}, 0),
+            _segment("json", {"data": '{"desc":"QQ卡片"}'}, 1),
+        ],
+        app_share_title="阶段一设计",
+        sender_card="Arsvine",
+    )
+
+    built = asyncio.run(
+        build_context(
+            source,
+            _BridgeStub(None, [source]),
+            settings,
+            event=SimpleNamespace(raw_message="/ask 看这个", user_id="20001"),
+            trigger_reason="prefix:/ask",
+            sender_name="Arsvine",
+        )
+    )
+
+    assert "/ask" not in built.current_block
+    assert "看这个 阶段一设计" in built.current_block
+
+
+def test_expand_context_merges_local_context_with_topic_selection():
     settings = build_config(
         {
             "enabled": True,
@@ -399,11 +457,13 @@ def test_build_context_topic_ai_selects_related_messages_and_forward_summary():
         }
     )
     source = _message("m-current", raw_message="这个转发里说的是硬盘吗")
+    quote = _message("m-quote", raw_message="我们是在比较容量和速度")
     forward = _message(
         "m-forward",
         raw_message="看这个",
         has_forward=True,
         sender_nickname="转发者",
+        segments=[_segment("forward", {"id": "fw-1"}, 0)],
         forward_messages=[
             SimpleNamespace(
                 id=1, depth=0, nickname="A", content_summary="讨论了外接硬盘价格"
@@ -426,74 +486,75 @@ def test_build_context_topic_ai_selects_related_messages_and_forward_summary():
         )
     )
 
-    built = asyncio.run(
-        build_context(
-            source,
-            _BridgeStub(None, [source, forward, noise]),
-            settings,
-            analyzer_api=api,
-        )
+    local_ctx = BuiltContext(
+        context_ids=["m-current", "m-quote", "m-noise"],
+        quoted_block="[12:29] A: 我们是在比较容量和速度",
+        recent_block="[12:28] 路人: 中午吃什么",
+        current_block="[12:30] 20001: 这个转发里说的是硬盘吗",
+        variant="group_topic_local",
+        chat_type="group",
     )
 
-    assert "response_format" in api.ai.calls[0][1]
-    assert api.ai.calls[0][1]["response_format"] == {"type": "json_object"}
-    assert built.variant == "group_topic_ai"
+    built = asyncio.run(
+        expand_context(
+            source,
+            local_ctx,
+            _BridgeStub(
+                quote,
+                [source, forward, noise],
+                messages_by_id={"m-quote": quote},
+                candidate_messages=[source, quote, forward, noise],
+            ),
+            settings,
+            analyzer_api=api,
+            request_reason="引用链里缺转发原文",
+        )
+    )
+    payload = json.loads(api.ai.calls[0][0][1]["content"])
+    forward_item = next(
+        item for item in payload["candidate_messages"] if item["id"] == "m-forward"
+    )
+
+    assert built.variant == "group_topic_expanded"
     assert built.topic_title == "硬盘选择"
     assert built.topic_confidence == 0.82
     assert built.topic_participants == ["转发者（提供转发）"]
-    assert built.context_ids == ["m-current", "m-forward"]
-    assert "合并转发摘要" in built.recent_block
+    assert built.context_ids == ["m-current", "m-quote", "m-noise", "m-forward"]
+    assert "合并转发摘要：" in built.recent_block
     assert "A：讨论了外接硬盘价格" in built.recent_block
-    assert "……已截断。" in built.recent_block
-    assert "m-noise" not in built.context_ids
+    assert "B：提到 1TB 和 2TB 选择" in built.recent_block
+    assert "A：讨论了外接硬盘价格" in forward_item["content"]
 
 
-def test_build_context_topic_ai_invalid_json_falls_back_to_recent():
+def test_expand_context_invalid_json_raises_topic_context_error():
     settings = build_config(
         {
             "enabled": True,
             "recorder_db": "C:/tmp/recorder.db",
-            "context": {"mode": "topic_ai", "fallback_recent_limit_group": 2},
+            "context": {"mode": "topic_ai"},
         }
     )
     source = _message("m-current", raw_message="现在聊什么")
-    recent = [
-        source,
-        _message("m-r1", raw_message="话题一"),
-        _message("m-r2", raw_message="话题二"),
-    ]
-    api = SimpleNamespace(ai=_FakeAIAPI("不是 JSON"))
-
-    built = asyncio.run(
-        build_context(source, _BridgeStub(None, recent), settings, analyzer_api=api)
+    local_ctx = BuiltContext(
+        context_ids=["m-current"],
+        quoted_block="",
+        recent_block="",
+        current_block="[12:30] 20001: 现在聊什么",
+        variant="group_topic_local",
+        chat_type="group",
     )
-
-    assert built.variant == "group_compact"
-    assert built.topic_fallback_used is True
-    assert built.topic_error_code == "topic_invalid_tool_arguments"
-    assert built.context_ids == ["m-current", "m-r1", "m-r2"]
-
-
-def test_build_context_topic_ai_invalid_json_raises_when_fallback_disabled():
-    settings = build_config(
-        {
-            "enabled": True,
-            "recorder_db": "C:/tmp/recorder.db",
-            "context": {"mode": "topic_ai", "fallback_recent_limit_group": 2},
-            "topic_analyzer": {"fallback_to_recent": False},
-        }
-    )
-    source = _message("m-current", raw_message="现在聊什么")
-    recent = [
-        source,
-        _message("m-r1", raw_message="话题一"),
-        _message("m-r2", raw_message="话题二"),
-    ]
     api = SimpleNamespace(ai=_FakeAIAPI("不是 JSON"))
 
     with pytest.raises(TopicContextError) as exc_info:
         asyncio.run(
-            build_context(source, _BridgeStub(None, recent), settings, analyzer_api=api)
+            expand_context(
+                source,
+                local_ctx,
+                _BridgeStub(None, [source]),
+                settings,
+                analyzer_api=api,
+                request_reason="上下文不足",
+            )
         )
 
     assert exc_info.value.analysis.error_code == "topic_invalid_tool_arguments"

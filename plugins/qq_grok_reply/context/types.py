@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from .topic_analyzer import TopicAnalysis
+from ..llm.topic_analyzer import TopicAnalysis
 
 
 class TopicContextError(RuntimeError):

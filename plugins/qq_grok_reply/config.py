@@ -56,6 +56,28 @@ def build_config(raw: dict) -> ReplyPluginSettings:
             mode=context_data.get("mode", "topic_ai"),
             recent_limit_group=context_data.get("recent_limit_group", 6),
             recent_limit_private=context_data.get("recent_limit_private", 10),
+            local_recent_limit_group=context_data.get("local_recent_limit_group", 30),
+            local_recent_limit_private=context_data.get(
+                "local_recent_limit_private", 30
+            ),
+            local_recent_time_window_minutes_group=context_data.get(
+                "local_recent_time_window_minutes_group", 30
+            ),
+            local_recent_time_window_minutes_private=context_data.get(
+                "local_recent_time_window_minutes_private", 30
+            ),
+            quote_chain_max_depth_group=context_data.get(
+                "quote_chain_max_depth_group", 10
+            ),
+            quote_chain_max_depth_private=context_data.get(
+                "quote_chain_max_depth_private", 10
+            ),
+            quote_neighbor_limit_group=context_data.get(
+                "quote_neighbor_limit_group", 10
+            ),
+            quote_neighbor_limit_private=context_data.get(
+                "quote_neighbor_limit_private", 10
+            ),
             quote_chars_group=context_data.get("quote_chars_group", 320),
             quote_chars_private=context_data.get("quote_chars_private", 480),
             total_chars_group=context_data.get("total_chars_group", 6000),
@@ -124,6 +146,7 @@ def build_config(raw: dict) -> ReplyPluginSettings:
             log_runtime=trace_data.get("log_runtime", True),
             log_context_blocks=trace_data.get("log_context_blocks", False),
             log_chars=trace_data.get("log_chars", 4000),
+            pretty_print=trace_data.get("pretty_print", False),
         ),
         lock_retry=LockRetryConfig(
             enabled=lock_retry_data.get("enabled", True),

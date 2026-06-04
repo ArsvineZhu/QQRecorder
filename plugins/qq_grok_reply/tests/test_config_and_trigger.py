@@ -70,6 +70,35 @@ def test_build_config_requires_recorder_db_when_enabled():
         build_config({"enabled": True})
 
 
+def test_build_config_exposes_local_first_topic_ai_defaults():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+        }
+    )
+
+    assert settings.context.local_recent_limit_group == 30
+    assert settings.context.local_recent_limit_private == 30
+    assert settings.context.local_recent_time_window_minutes_group == 30
+    assert settings.context.local_recent_time_window_minutes_private == 30
+    assert settings.context.quote_chain_max_depth_group == 10
+    assert settings.context.quote_chain_max_depth_private == 10
+    assert settings.context.quote_neighbor_limit_group == 10
+    assert settings.context.quote_neighbor_limit_private == 10
+
+
+def test_build_config_validates_local_topic_ai_limits():
+    with pytest.raises(ValueError, match="local topic context limits"):
+        build_config(
+            {
+                "enabled": True,
+                "recorder_db": "C:/tmp/recorder.db",
+                "context": {"local_recent_limit_group": 0},
+            }
+        )
+
+
 def test_build_config_skips_unused_placeholder_target_validation():
     disabled_settings = build_config(
         {

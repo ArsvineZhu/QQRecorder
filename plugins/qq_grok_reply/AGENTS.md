@@ -8,40 +8,49 @@ the response back through NcatBot. Python 3.12+, async throughout.
 ## DATA FLOW
 
 ```
-NcatBot Event -> plugin._handle()
+NcatBot Event -> plugin._handle() -> app.flow.handle_event()
   ├─ trigger.prefilter_event() -> cheap trigger gate
   ├─ RecorderBridge.wait_until_visible() -> read recorder row after write
   ├─ trigger.final_decision() -> cooldown / reply-to-bot / prefix / @ logic
-  ├─ context_builder.build_context() -> topic_ai or recent context assembly
-  ├─ model_client.generate_reply() -> LLM / adapter call
-  ├─ sender.send_reply() -> group/private send helpers
-  └─ trace_store.TraceStore -> decision + context + result tracking
+  ├─ context.build_context() -> topic_ai or recent context assembly
+  ├─ llm.generate_reply() -> LLM / adapter call
+  ├─ delivery.send_reply() -> group/private send helpers
+  └─ infra.TraceStore -> decision + context + result tracking
 ```
 
 ## STRUCTURE
 
 ```
 plugins/qq_grok_reply/
-├── plugin.py              # QQGrokReplyPlugin entry
+├── plugin.py              # QQGrokReplyPlugin entry, lifecycle, thin event delegation
 ├── manifest.toml          # NcatBot plugin descriptor
 ├── config.py              # config assembly + target checks
 ├── config_schema.py       # dataclass schemas for reply settings
 ├── config_validation.py   # configuration validation rules
-├── trigger.py             # prefilter, cooldown, final decision
-├── context_builder.py     # recorder data -> prompt context
-├── context_render.py      # render/trim helpers for context text
-├── context_types.py       # BuiltContext and error types
-├── context_legacy_forward.py # legacy forward hydration helpers
-├── recorder_bridge.py     # cross-plugin DB bridge to qq_recorder models
-├── model_client.py        # AI provider integration
-├── sender.py              # reply sending helpers
-├── trace_store.py         # decision / error / send trace persistence
-├── prompt.py              # prompt assembly
-├── topic_analyzer.py      # topic summarisation and validation
-├── text_splitter.py       # long-text chunking helpers
-├── plugin_utils.py        # shared utility helpers
 ├── compat.py              # compatibility imports for recorder models/storage
 ├── models.py              # reply-plugin DB models
+├── app/
+│   └── flow.py            # main per-message orchestration
+├── context/
+│   ├── builder.py         # recorder data -> prompt context
+│   ├── render.py          # render/trim helpers for context text
+│   ├── types.py           # BuiltContext and error types
+│   ├── legacy_forward.py  # legacy forward hydration helpers
+│   └── message_renderer.py # structured message textification
+├── llm/
+│   ├── client.py          # AI provider integration
+│   ├── prompt.py          # prompt assembly
+│   └── topic_analyzer.py  # topic summarisation and validation
+├── infra/
+│   ├── recorder_bridge.py # cross-plugin DB bridge to qq_recorder models
+│   └── trace_store.py     # decision / error / send trace persistence
+├── delivery/
+│   ├── sender.py          # reply sending helpers
+│   └── text_splitter.py   # long-text chunking helpers
+├── trigger/
+│   └── rules.py           # prefilter, cooldown, final decision
+├── shared/
+│   └── utils.py           # shared utility helpers
 └── tests/
     ├── test_*.py         # config, context, model, sender, bridge, prompt, smoke, flow
     └── __init__.py
@@ -51,23 +60,25 @@ plugins/qq_grok_reply/
 
 | File | Role | Key Exports |
 |------|------|-------------|
-| `plugin.py` | Plugin lifecycle, trigger handling, context building, reply sending | `QQGrokReplyPlugin` |
+| `plugin.py` | Plugin lifecycle and thin event delegation | `QQGrokReplyPlugin` |
+| `app/flow.py` | Main reply orchestration for one event | `handle_event()` |
 | `config.py` | Build settings and check chat targeting | `build_config()`, `is_chat_targeted()`, `RECORDER_COMMAND_PREFIXES` |
 | `config_schema.py` | Dataclass schemas for nested config | `ReplyPluginSettings`, `TriggerConfig`, `ContextConfig`, `ModelConfig`, ... |
 | `config_validation.py` | Validate config invariants and ranges | `validate_config()` |
-| `trigger.py` | Prefilter, cooldown tracking, and final trigger decisions | `CooldownTracker`, `prefilter_event()`, `final_decision()` |
-| `context_builder.py` | Build prompt context from recorder DB rows and runtime metadata | `build_context()`, `TopicContextError` |
-| `context_render.py` | Render, trim, and select context blocks | `render_message()`, `render_line()`, `trim()`, `unique()`, ... |
-| `context_types.py` | Context DTOs and related error types | `BuiltContext`, `TopicContextError` |
-| `context_legacy_forward.py` | Hydrate legacy forward records before rendering | `hydrate_legacy_forward_message()`, `hydrate_legacy_forward_messages()` |
-| `recorder_bridge.py` | Read `qq_recorder` data through imported recorder models/storage | `RecorderBridge` |
-| `topic_analyzer.py` | Analyze topic candidates and validate results | `TopicAnalysis`, `analyze_topic()`, `validate_topic_analysis()` |
-| `prompt.py` | Assemble prompt payloads for the model provider | prompt builders/helpers |
-| `model_client.py` | Provider-specific model call and response parsing | `generate_reply()`, `ReplyModelError` |
-| `sender.py` | Send reply segments through NcatBot | `send_reply()`, `SendOutcome` |
-| `trace_store.py` | Persist trigger decisions, prompt summaries, and send results | `TraceStore` |
-| `text_splitter.py` | Split long responses into safe parts | splitter helpers |
-| `plugin_utils.py` | Shared utility helpers for payload formatting and awaitable handling | `json_list()`, `json_payload()`, `resolve_awaitable()`, ... |
+| `trigger/rules.py` | Prefilter, cooldown tracking, and final trigger decisions | `CooldownTracker`, `prefilter_event()`, `final_decision()` |
+| `context/builder.py` | Build prompt context from recorder DB rows and runtime metadata | `build_context()`, `TopicContextError` |
+| `context/render.py` | Render, trim, and select context blocks | `render_message()`, `render_line()`, `trim()`, `unique()`, ... |
+| `context/types.py` | Context DTOs and related error types | `BuiltContext`, `TopicContextError` |
+| `context/legacy_forward.py` | Hydrate legacy forward records before rendering | `hydrate_legacy_forward_message()`, `hydrate_legacy_forward_messages()` |
+| `context/message_renderer.py` | Render structured segments into readable text | `render_message_text()`, `render_forward_tree()` |
+| `infra/recorder_bridge.py` | Read `qq_recorder` data through imported recorder models/storage | `RecorderBridge` |
+| `llm/topic_analyzer.py` | Analyze topic candidates and validate results | `TopicAnalysis`, `analyze_topic()`, `validate_topic_analysis()` |
+| `llm/prompt.py` | Assemble prompt payloads for the model provider | prompt builders/helpers |
+| `llm/client.py` | Provider-specific model call and response parsing | `generate_reply()`, `ReplyModelError` |
+| `delivery/sender.py` | Send reply segments through NcatBot | `send_reply()`, `SendOutcome` |
+| `infra/trace_store.py` | Persist trigger decisions, prompt summaries, and send results | `TraceStore` |
+| `delivery/text_splitter.py` | Split long responses into safe parts | splitter helpers |
+| `shared/utils.py` | Shared utility helpers for payload formatting and awaitable handling | `json_list()`, `json_payload()`, `resolve_awaitable()`, ... |
 | `compat.py` | Import sibling `qq_recorder` modules safely | import helpers for bridge compatibility |
 
 ## CONVENTIONS
