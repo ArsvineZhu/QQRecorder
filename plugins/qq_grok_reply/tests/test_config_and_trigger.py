@@ -99,6 +99,50 @@ def test_build_config_validates_local_topic_ai_limits():
         )
 
 
+def test_build_config_exposes_vision_defaults():
+    settings = build_config(
+        {
+            "enabled": True,
+            "recorder_db": "C:/tmp/recorder.db",
+            "vision": {"enabled": True, "dashscope_api_key": "key"},
+        }
+    )
+
+    assert settings.vision.image_fast_model == "qwen3-vl-flash"
+    assert settings.vision.image_detail_model == "qwen3-vl-plus"
+    assert settings.vision.image_deep_semantic_model == "qwen3.7-plus"
+    assert settings.vision.video_summary_model == "qwen3.6-flash"
+
+
+def test_build_config_validates_vision_limits():
+    with pytest.raises(ValueError, match="vision.source_image_bytes_threshold"):
+        build_config(
+            {
+                "enabled": True,
+                "recorder_db": "C:/tmp/recorder.db",
+                "vision": {
+                    "enabled": True,
+                    "dashscope_api_key": "key",
+                    "source_image_bytes_threshold": 1024,
+                    "api_image_bytes_max": 2048,
+                },
+            }
+        )
+
+    with pytest.raises(ValueError, match="vision.escalation_min_confidence"):
+        build_config(
+            {
+                "enabled": True,
+                "recorder_db": "C:/tmp/recorder.db",
+                "vision": {
+                    "enabled": True,
+                    "dashscope_api_key": "key",
+                    "escalation_min_confidence": 1.2,
+                },
+            }
+        )
+
+
 def test_build_config_skips_unused_placeholder_target_validation():
     disabled_settings = build_config(
         {

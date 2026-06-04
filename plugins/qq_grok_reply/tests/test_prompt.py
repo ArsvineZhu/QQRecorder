@@ -69,6 +69,7 @@ def test_build_messages_includes_sections_with_content():
         sender_name="User",
         quoted_block="[11:59] Other: 引用内容",
         recent_block="[11:58] Someone: 最近消息",
+        visual_context="图片类型：meme | 可能含义：在阴阳怪气",
         current_block="[12:00] User: 当前消息",
         topic_title="测试话题",
         topic_summary="这是摘要",
@@ -80,6 +81,8 @@ def test_build_messages_includes_sections_with_content():
 
     assert "【引用消息】" in messages[1]["content"]
     assert "【相关消息】" in messages[1]["content"]
+    assert "【视觉分析】" in messages[1]["content"]
+    assert "阴阳怪气" in messages[1]["content"]
     assert "【当前话题】" in messages[1]["content"]
     assert "测试话题" in messages[1]["content"]
     assert "【会话信息】" in messages[1]["content"]

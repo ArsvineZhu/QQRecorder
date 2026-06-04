@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from ncatbot.core import registrar
 from ncatbot.event.qq import GroupMessageEvent, PrivateMessageEvent
@@ -9,6 +10,12 @@ from .app.flow import handle_event
 from .config import ReplyPluginSettings, build_config
 from .infra import RecorderBridge, TraceStore
 from .trigger import CooldownTracker
+from .vision.cache import VisionCacheStore
+from .vision.client import create_dashscope_client
+from .vision.quota import VisionQuotaTracker
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 
 class QQGrokReplyPlugin(NcatBotPlugin):
@@ -23,6 +30,9 @@ class QQGrokReplyPlugin(NcatBotPlugin):
         self._bridge: RecorderBridge | None = None
         self._trace_store: TraceStore | None = None
         self._cooldowns = CooldownTracker()
+        self._vision_client: OpenAI | None = None
+        self._vision_cache: VisionCacheStore | None = None
+        self._vision_quota: VisionQuotaTracker | None = None
 
     async def on_load(self) -> None:
         self.settings = build_config(getattr(self, "config", {}) or {})
@@ -38,15 +48,49 @@ class QQGrokReplyPlugin(NcatBotPlugin):
         await self._bridge.connect_existing(self.settings.recorder_db)
         self._trace_store = TraceStore(self.settings.recorder_db)
         await self._trace_store.init_db()
+
+        # Initialize vision module
+        await self._init_vision()
+
         self.logger.info(
             "qq_grok_reply loaded | recorder_db=%s", self.settings.recorder_db
         )
+
+    async def _init_vision(self) -> None:
+        """Initialize the vision analysis module if configured."""
+        vision = self.settings.vision
+        if not vision.enabled or not vision.dashscope_api_key:
+            self.logger.info(
+                "qq_grok_reply vision disabled (enabled=%s, key_set=%s)",
+                vision.enabled,
+                bool(vision.dashscope_api_key),
+            )
+            return
+
+        try:
+            self._vision_client = create_dashscope_client(vision.dashscope_api_key)
+            self._vision_cache = VisionCacheStore(self.settings.recorder_db)
+            await self._vision_cache.init_db()
+            self._vision_quota = VisionQuotaTracker(vision)
+        except Exception as exc:
+            self.logger.warning("qq_grok_reply vision init failed: %s", exc)
+            self._vision_client = None
+            self._vision_cache = None
+            self._vision_quota = None
+            return
+
+        self.logger.info("qq_grok_reply vision initialized")
 
     async def on_close(self) -> None:
         if self._bridge is not None:
             await self._bridge.close()
         if self._trace_store is not None:
             await self._trace_store.close()
+        if self._vision_cache is not None:
+            await self._vision_cache.close()
+        self._vision_client = None
+        self._vision_cache = None
+        self._vision_quota = None
         self.logger.info("qq_grok_reply unloaded")
 
     @registrar.qq.on_group_message()

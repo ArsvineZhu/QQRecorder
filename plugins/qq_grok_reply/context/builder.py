@@ -33,6 +33,7 @@ async def build_context(
     sender_name: str | None = None,
     analyzer_api=None,
     runtime_api=None,
+    visual_context: str = "",
 ) -> BuiltContext:
     if settings.context.mode == "topic_ai":
         return await _build_local_topic_context(
@@ -43,6 +44,7 @@ async def build_context(
             trigger_reason=trigger_reason,
             sender_name=sender_name,
             runtime_api=runtime_api,
+            visual_context=visual_context,
         )
     return await _build_recent_context(
         source_msg,
@@ -53,6 +55,7 @@ async def build_context(
         sender_name=sender_name,
         recent_limit_override=None,
         runtime_api=runtime_api,
+        visual_context=visual_context,
     )
 
 
@@ -183,6 +186,7 @@ async def expand_context(
         variant_override="group_topic_expanded"
         if is_group
         else "private_topic_expanded",
+        visual_context=local_ctx.visual_context,
     )
 
 
@@ -195,6 +199,7 @@ async def _build_local_topic_context(
     trigger_reason: str,
     sender_name: str | None,
     runtime_api,
+    visual_context: str = "",
 ) -> BuiltContext:
     source_msg = await hydrate_legacy_forward_message(source_msg, runtime_api, settings)
     assert source_msg is not None
@@ -276,6 +281,7 @@ async def _build_local_topic_context(
         analysis=None,
         context_id_order=context_ids,
         variant_override="group_topic_local" if is_group else "private_topic_local",
+        visual_context=visual_context,
     )
 
 
@@ -289,6 +295,7 @@ async def _build_recent_context(
     sender_name: str | None = None,
     recent_limit_override: int | None,
     runtime_api=None,
+    visual_context: str = "",
 ) -> BuiltContext:
     chat_type = str(source_msg.chat_type)
     is_group = chat_type == "group"
@@ -329,6 +336,7 @@ async def _build_recent_context(
         analysis=None,
         context_id_order=None,
         variant_override=None,
+        visual_context=visual_context,
     )
 
 
@@ -344,6 +352,7 @@ def _assemble_context(
     analysis: TopicAnalysis | None,
     context_id_order: list[str] | None,
     variant_override: str | None,
+    visual_context: str = "",
 ) -> BuiltContext:
     chat_type = str(source_msg.chat_type)
     is_group = chat_type == "group"
@@ -441,6 +450,7 @@ def _assemble_context(
         topic_error_code=analysis.error_code if analysis else "",
         topic_fallback_used=analysis.fallback_used if analysis else False,
         topic_excluded_ids_json=analysis.excluded_ids_json() if analysis else "[]",
+        visual_context=visual_context,
     )
 
 

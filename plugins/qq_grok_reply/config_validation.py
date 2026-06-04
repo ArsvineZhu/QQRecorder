@@ -26,6 +26,7 @@ def _validate_runtime_limits(settings: ReplyPluginSettings) -> None:
     _validate_context_limits(settings)
     _validate_topic_limits(settings)
     _validate_model_limits(settings)
+    _validate_vision_limits(settings)
     _validate_send_limits(settings)
     _validate_trace_limits(settings)
     _validate_lock_retry(settings)
@@ -133,6 +134,61 @@ def _validate_topic_limits(settings: ReplyPluginSettings) -> None:
         raise ValueError("topic_analyzer.min_confidence must be between 0 and 1")
     if settings.topic_analyzer.timeout_sec <= 0:
         raise ValueError("topic_analyzer.timeout_sec must be > 0")
+
+
+def _validate_vision_limits(settings: ReplyPluginSettings) -> None:
+    vision = settings.vision
+    _validate_vision_core_limits(vision)
+    _validate_vision_quota_limits(vision)
+    if vision.enabled:
+        _validate_vision_models(vision)
+
+
+def _validate_vision_core_limits(vision) -> None:
+    if vision.max_images_per_message <= 0:
+        raise ValueError("vision.max_images_per_message must be > 0")
+    if vision.timeout_sec <= 0 or vision.video_timeout_sec <= 0:
+        raise ValueError("vision timeout values must be > 0")
+    if vision.source_image_bytes_threshold <= 0 or vision.api_image_bytes_max <= 0:
+        raise ValueError("vision image byte thresholds must be > 0")
+    if vision.source_image_bytes_threshold < vision.api_image_bytes_max:
+        raise ValueError(
+            "vision.source_image_bytes_threshold must be >= vision.api_image_bytes_max"
+        )
+    if vision.cache_ttl_days < 0:
+        raise ValueError("vision.cache_ttl_days must be >= 0")
+    if not 0 <= vision.escalation_min_confidence <= 1:
+        raise ValueError("vision.escalation_min_confidence must be between 0 and 1")
+    if vision.escalation_max_images_escalate < 0:
+        raise ValueError("vision.escalation_max_images_escalate must be >= 0")
+    if vision.router_image_bytes_threshold <= 0:
+        raise ValueError("vision.router_image_bytes_threshold must be > 0")
+    if vision.video_max_duration_min <= 0 or vision.video_max_bytes <= 0:
+        raise ValueError("vision video limits must be > 0")
+
+
+def _validate_vision_quota_limits(vision) -> None:
+    if any(
+        value <= 0
+        for value in (
+            vision.daily_limit_image_per_user_chat,
+            vision.daily_limit_image_global,
+            vision.daily_limit_video_per_user_chat,
+            vision.daily_limit_video_global,
+        )
+    ):
+        raise ValueError("vision daily limits must be > 0")
+
+
+def _validate_vision_models(vision) -> None:
+    model_names = (
+        vision.image_fast_model,
+        vision.image_detail_model,
+        vision.image_deep_semantic_model,
+        vision.video_summary_model,
+    )
+    if any(not str(name).strip() for name in model_names):
+        raise ValueError("vision model names must not be empty when vision is enabled")
 
 
 def _validate_targets(settings: ReplyPluginSettings) -> None:

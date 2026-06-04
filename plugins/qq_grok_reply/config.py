@@ -13,6 +13,7 @@ from .config_schema import (
     TopicAnalyzerConfig,
     TraceConfig,
     TriggerConfig,
+    VisionConfig,
 )
 from .config_validation import validate_config
 
@@ -30,6 +31,7 @@ def build_config(raw: dict) -> ReplyPluginSettings:
     send_data = raw.get("send", {})
     trace_data = raw.get("trace", {})
     lock_retry_data = raw.get("lock_retry", {})
+    vision_data = raw.get("vision", {})
 
     settings = ReplyPluginSettings(
         enabled=raw.get("enabled", False),
@@ -152,6 +154,55 @@ def build_config(raw: dict) -> ReplyPluginSettings:
             enabled=lock_retry_data.get("enabled", True),
             max_retries=lock_retry_data.get("max_retries", 5),
             base_delay_ms=lock_retry_data.get("base_delay_ms", 50),
+        ),
+        vision=VisionConfig(
+            enabled=vision_data.get("enabled", False),
+            dashscope_api_key=vision_data.get("dashscope_api_key", ""),
+            image_fast_model=vision_data.get("image_fast_model", "qwen3-vl-flash"),
+            image_detail_model=vision_data.get("image_detail_model", "qwen3-vl-plus"),
+            image_deep_semantic_model=vision_data.get(
+                "image_deep_semantic_model", "qwen3.7-plus"
+            ),
+            video_summary_model=vision_data.get("video_summary_model", "qwen3.6-flash"),
+            temperature=vision_data.get("temperature", 0.4),
+            timeout_sec=vision_data.get("timeout_sec", 20),
+            source_image_bytes_threshold=vision_data.get(
+                "source_image_bytes_threshold", 50 * 1024 * 1024
+            ),
+            api_image_bytes_max=vision_data.get(
+                "api_image_bytes_max", 10 * 1024 * 1024
+            ),
+            max_images_per_message=vision_data.get("max_images_per_message", 3),
+            include_in_context=vision_data.get("include_in_context", True),
+            cache_enabled=vision_data.get("cache_enabled", True),
+            cache_ttl_days=vision_data.get("cache_ttl_days", 30),
+            prompt_version=vision_data.get("prompt_version", "visual_v1"),
+            schema_version=vision_data.get("schema_version", "visual_semantic_json_v1"),
+            daily_limit_image_per_user_chat=vision_data.get(
+                "daily_limit_image_per_user_chat", 30
+            ),
+            daily_limit_image_global=vision_data.get("daily_limit_image_global", 500),
+            daily_limit_video_per_user_chat=vision_data.get(
+                "daily_limit_video_per_user_chat", 3
+            ),
+            daily_limit_video_global=vision_data.get("daily_limit_video_global", 20),
+            router_image_bytes_threshold=vision_data.get(
+                "router_image_bytes_threshold", 1 * 1024 * 1024
+            ),
+            escalation_enabled=vision_data.get("escalation_enabled", True),
+            escalation_min_confidence=vision_data.get(
+                "escalation_min_confidence", 0.65
+            ),
+            escalation_max_images_escalate=vision_data.get(
+                "escalation_max_images_escalate", 1
+            ),
+            escalation_detail_screenshot_types=vision_data.get(
+                "escalation_detail_screenshot_types",
+                ["screenshot", "document"],
+            ),
+            video_max_duration_min=vision_data.get("video_max_duration_min", 30),
+            video_max_bytes=vision_data.get("video_max_bytes", 500 * 1024 * 1024),
+            video_timeout_sec=vision_data.get("video_timeout_sec", 60),
         ),
     )
     validate_config(settings)
