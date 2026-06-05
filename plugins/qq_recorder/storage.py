@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 from sqlalchemy import desc, func, select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -20,6 +20,7 @@ from .models import (
     MessageSegment,
     MonitoredChat,
     Reply,
+    Video,
     init_engine,
 )
 
@@ -103,7 +104,106 @@ class MessageStorage:
                 await asyncio.sleep(delay_ms / 1000)
         raise RuntimeError(f"unreachable lock retry path for {op_name}")
 
-    async def save_message(self, message_data: dict) -> int:  # noqa: C901
+
+async def _add_segments(session, message_id: int, segments: list[dict]) -> None:
+    for seg in segments:
+        session.add(
+            MessageSegment(
+                message_id=message_id,
+                segment_type=seg["segment_type"],
+                segment_order=seg["segment_order"],
+                segment_data=seg["segment_data"],
+            )
+        )
+
+
+async def _add_images(session, message_id: int, images: list[dict]) -> None:
+    for img in images:
+        session.add(
+            Image(
+                message_id=message_id,
+                file_url=img.get("file_url"),
+                file_unique=img.get("file_unique"),
+                file_size=img.get("file_size"),
+                local_path=img.get("local_path"),
+                width=img.get("width"),
+                height=img.get("height"),
+                downloaded=img.get("downloaded", False),
+            )
+        )
+
+
+async def _add_videos(session, message_id: int, videos: list[dict]) -> None:
+    for video in videos:
+        session.add(
+            Video(
+                message_id=message_id,
+                file_url=video.get("file_url"),
+                file_unique=video.get("file_unique"),
+                file_size=video.get("file_size"),
+                local_path=video.get("local_path"),
+                duration_sec=video.get("duration_sec"),
+                downloaded=video.get("downloaded", False),
+                title=video.get("title", ""),
+                intro=video.get("intro", ""),
+            )
+        )
+
+
+async def _add_replies(session, message_id: int, replies: list[dict]) -> None:
+    for reply in replies:
+        session.add(
+            Reply(
+                message_id=message_id,
+                reply_to_message_id=reply["reply_to_message_id"],
+            )
+        )
+
+
+async def _add_forward_messages(
+    session, message_id: int, forwards: list[dict], parent_id: int | None = None
+) -> None:
+    for forward_data in forwards:
+        forward = ForwardMessage(
+            message_id=message_id,
+            parent_forward_id=parent_id,
+            user_id=forward_data.get("user_id"),
+            nickname=forward_data.get("nickname"),
+            depth=forward_data.get("depth", 0),
+            content_summary=forward_data.get("content_summary"),
+            forward_id=forward_data.get("forward_id"),
+        )
+        session.add(forward)
+        await session.flush()
+        children = forward_data.get("children", [])
+        if children:
+            await _add_forward_messages(
+                session, message_id, children, parent_id=forward.id
+            )
+
+
+async def _add_at_mentions(session, message_id: int, mentions: list[dict]) -> None:
+    for at in mentions:
+        session.add(
+            AtMention(message_id=message_id, target_user_id=at["target_user_id"])
+        )
+
+
+async def _add_app_shares(session, message_id: int, shares: list[dict]) -> None:  # noqa: C901
+    for share in shares:
+        session.add(
+            AppShare(
+                message_id=message_id,
+                app_name=share.get("app_name", ""),
+                title=share.get("title", ""),
+                description=share.get("description", ""),
+                url=share.get("url", ""),
+                prompt=share.get("prompt", ""),
+                raw_data=share.get("raw_data", ""),
+            )
+        )
+
+    async def save_message(self, message_data: dict) -> int:
         async def _save_once() -> int:
             async with self._session() as session:
                 try:
@@ -119,79 +219,36 @@ class MessageStorage:
                         has_image=len(message_data.get("images", [])) > 0,
                         has_reply=len(message_data.get("replies", [])) > 0,
                         has_forward=len(message_data.get("forward_messages", [])) > 0,
+                        has_video=len(message_data.get("videos", [])) > 0,
                         has_at=len(message_data.get("at_mentions", [])) > 0,
                         has_app_share=len(message_data.get("app_shares", [])) > 0,
                     )
                     session.add(message)
                     await session.flush()
 
-                    for seg in message_data.get("segments", []):
-                        segment = MessageSegment(
-                            message_id=message.id,
-                            segment_type=seg["segment_type"],
-                            segment_order=seg["segment_order"],
-                            segment_data=seg["segment_data"],
-                        )
-                        session.add(segment)
-
-                    for img in message_data.get("images", []):
-                        image = Image(
-                            message_id=message.id,
-                            file_url=img.get("file_url"),
-                            file_unique=img.get("file_unique"),
-                            file_size=img.get("file_size"),
-                            local_path=img.get("local_path"),
-                            width=img.get("width"),
-                            height=img.get("height"),
-                            downloaded=img.get("downloaded", False),
-                        )
-                        session.add(image)
-
-                    for reply in message_data.get("replies", []):
-                        reply_obj = Reply(
-                            message_id=message.id,
-                            reply_to_message_id=reply["reply_to_message_id"],
-                        )
-                        session.add(reply_obj)
-
-                    async def save_forward(forward_data, parent_id=None):
-                        forward = ForwardMessage(
-                            message_id=message.id,
-                            parent_forward_id=parent_id,
-                            user_id=forward_data.get("user_id"),
-                            nickname=forward_data.get("nickname"),
-                            depth=forward_data.get("depth", 0),
-                            content_summary=forward_data.get("content_summary"),
-                            forward_id=forward_data.get("forward_id"),
-                        )
-                        session.add(forward)
-                        await session.flush()
-                        for child in forward_data.get("children", []):
-                            await save_forward(child, forward.id)
-
-                    for forward in message_data.get("forward_messages", []):
-                        await save_forward(forward)
-
-                    for at in message_data.get("at_mentions", []):
-                        at_obj = AtMention(
-                            message_id=message.id, target_user_id=at["target_user_id"]
-                        )
-                        session.add(at_obj)
-
-                    for share in message_data.get("app_shares", []):
-                        share_obj = AppShare(
-                            message_id=message.id,
-                            app_name=share.get("app_name", ""),
-                            title=share.get("title", ""),
-                            description=share.get("description", ""),
-                            url=share.get("url", ""),
-                            prompt=share.get("prompt", ""),
-                            raw_data=share.get("raw_data", ""),
-                        )
-                        session.add(share_obj)
+                    segments = message_data.get("segments", [])
+                    await _add_segments(session, message.id, segments)
+                    images = message_data.get("images", [])
+                    await _add_images(session, message.id, images)
+                    videos = message_data.get("videos", [])
+                    await _add_videos(session, message.id, videos)
+                    replies = message_data.get("replies", [])
+                    await _add_replies(session, message.id, replies)
+                    forwards = message_data.get("forward_messages", [])
+                    await _add_forward_messages(session, message.id, forwards)
+                    mentions = message_data.get("at_mentions", [])
+                    await _add_at_mentions(session, message.id, mentions)
+                    shares = message_data.get("app_shares", [])
+                    await _add_app_shares(session, message.id, shares)
 
                     await session.commit()
                     return message.id
+                except IntegrityError:
+                    await session.rollback()
+                    existing = await self.get_message(message_data["message_id"])
+                    if existing is not None:
+                        return existing.id
+                    raise
                 except Exception:
                     await session.rollback()
                     raise
@@ -206,6 +263,7 @@ class MessageStorage:
                 .options(
                     selectinload(Message.segments),
                     selectinload(Message.images),
+                    selectinload(Message.videos),
                     selectinload(Message.replies),
                     selectinload(Message.forward_messages).options(
                         selectinload(ForwardMessage.children)
@@ -225,6 +283,7 @@ class MessageStorage:
                 select(Message)
                 .options(
                     selectinload(Message.images),
+                    selectinload(Message.videos),
                     selectinload(Message.at_mentions),
                     selectinload(Message.app_shares),
                 )
@@ -311,6 +370,42 @@ class MessageStorage:
             result = await session.execute(stmt)
             return result.scalar_one()
 
+    async def count_videos(
+        self, chat_type: str | None = None, chat_id: str | None = None
+    ) -> int:
+        async with self._session() as session:
+            stmt = select(func.count(Video.id)).join(
+                Message, Video.message_id == Message.id
+            )
+            if chat_type:
+                stmt = stmt.where(Message.chat_type == chat_type)
+            if chat_id:
+                if chat_type == "group":
+                    stmt = stmt.where(Message.group_id == chat_id)
+                else:
+                    stmt = stmt.where(Message.user_id == chat_id)
+            result = await session.execute(stmt)
+            return result.scalar_one()
+
+    async def count_downloaded_videos(
+        self, chat_type: str | None = None, chat_id: str | None = None
+    ) -> int:
+        async with self._session() as session:
+            stmt = (
+                select(func.count(Video.id))
+                .join(Message, Video.message_id == Message.id)
+                .where(Video.downloaded)
+            )
+            if chat_type:
+                stmt = stmt.where(Message.chat_type == chat_type)
+            if chat_id:
+                if chat_type == "group":
+                    stmt = stmt.where(Message.group_id == chat_id)
+                else:
+                    stmt = stmt.where(Message.user_id == chat_id)
+            result = await session.execute(stmt)
+            return result.scalar_one()
+
     async def search_messages(
         self,
         keyword: str,
@@ -323,6 +418,7 @@ class MessageStorage:
                 select(Message)
                 .options(
                     selectinload(Message.images),
+                    selectinload(Message.videos),
                     selectinload(Message.at_mentions),
                     selectinload(Message.app_shares),
                 )
@@ -437,6 +533,52 @@ class MessageStorage:
 
         await self._run_with_lock_retry("apply_cached_image_to_message", _update_once)
 
+    async def find_reusable_video_by_url(self, file_url: str) -> Video | None:
+        async with self._session() as session:
+            stmt = (
+                select(Video)
+                .where(
+                    Video.file_url == file_url,
+                    Video.downloaded,
+                    Video.local_path.is_not(None),
+                )
+                .order_by(desc(Video.id))
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def apply_cached_video_to_message(
+        self,
+        message_db_id: int,
+        *,
+        file_url: str,
+        local_path: str,
+        file_unique: str | None,
+        file_size: int | None,
+    ) -> None:
+        async def _update_once() -> None:
+            async with self._session() as session:
+                try:
+                    stmt = select(Video).where(
+                        Video.message_id == message_db_id,
+                        Video.file_url == file_url,
+                    )
+                    result = await session.execute(stmt)
+                    video = result.scalar_one_or_none()
+                    if video is None:
+                        return
+                    video.local_path = local_path
+                    video.file_unique = file_unique
+                    video.file_size = file_size
+                    video.downloaded = True
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        await self._run_with_lock_retry("apply_cached_video_to_message", _update_once)
+
     async def get_monitored_chats(self) -> list[MonitoredChat]:
         async with self._session() as session:
             stmt = select(MonitoredChat).where(MonitoredChat.enabled)
@@ -513,10 +655,12 @@ class MessageStorage:
         analysis_json: str,
         media_type: str = "image",
         image_type: str = "",
+        semantic_text: str = "",
         confidence: float = 0.0,
         prompt_version: str = "",
         schema_version: str = "",
         image_id: int | None = None,
+        video_id: int | None = None,
         message_id: int | None = None,
     ) -> None:
         async def _upsert() -> None:
@@ -536,10 +680,12 @@ class MessageStorage:
                                 analysis_json=analysis_json,
                                 media_type=media_type,
                                 image_type=image_type,
+                                semantic_text=semantic_text,
                                 confidence=confidence,
                                 prompt_version=prompt_version,
                                 schema_version=schema_version,
                                 image_id=image_id,
+                                video_id=video_id,
                                 message_id=message_id,
                             )
                         )
@@ -547,11 +693,14 @@ class MessageStorage:
                         row.analysis_json = analysis_json
                         row.media_type = media_type
                         row.image_type = image_type
+                        row.semantic_text = semantic_text
                         row.confidence = confidence
                         row.prompt_version = prompt_version
                         row.schema_version = schema_version
                         if image_id is not None:
                             row.image_id = image_id
+                        if video_id is not None:
+                            row.video_id = video_id
                         if message_id is not None:
                             row.message_id = message_id
                     await session.commit()
@@ -599,3 +748,21 @@ def _ensure_message_sender_columns(sync_conn) -> None:
         )
     if "sender_card" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN sender_card VARCHAR")
+    if "has_video" not in columns:
+        sync_conn.exec_driver_sql(
+            "ALTER TABLE messages ADD COLUMN has_video BOOLEAN DEFAULT FALSE"
+        )
+
+    analysis_rows = list(
+        sync_conn.exec_driver_sql("PRAGMA table_info(image_analyses)").fetchall()
+    )
+    if analysis_rows:
+        analysis_columns = {row[1] for row in analysis_rows}
+        if "video_id" not in analysis_columns:
+            sync_conn.exec_driver_sql(
+                "ALTER TABLE image_analyses ADD COLUMN video_id INTEGER"
+            )
+        if "semantic_text" not in analysis_columns:
+            sync_conn.exec_driver_sql(
+                "ALTER TABLE image_analyses ADD COLUMN semantic_text TEXT DEFAULT ''"
+            )

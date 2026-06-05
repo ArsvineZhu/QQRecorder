@@ -113,7 +113,9 @@ class VisionConfig:
 
 @dataclass
 class PromptConfig:
+    assistant_name: str = "Grok"
     system_template_path: str = "prompt/system.md"
+    context_message_preview_chars: int = 280
 
 
 @dataclass

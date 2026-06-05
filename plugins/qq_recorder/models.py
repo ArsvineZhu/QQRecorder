@@ -35,6 +35,7 @@ class Message(Base):
     has_image: Mapped[bool] = mapped_column(Boolean, default=False)
     has_reply: Mapped[bool] = mapped_column(Boolean, default=False)
     has_forward: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_video: Mapped[bool] = mapped_column(Boolean, default=False)
     has_at: Mapped[bool] = mapped_column(Boolean, default=False)
     has_app_share: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
@@ -47,6 +48,12 @@ class Message(Base):
         back_populates="message",
         cascade="all, delete-orphan",
         order_by="Image.id",
+    )
+    videos: Mapped[list["Video"]] = relationship(
+        "Video",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="Video.id",
     )
     replies: Mapped[list["Reply"]] = relationship(
         "Reply", back_populates="message", cascade="all, delete-orphan"
@@ -95,6 +102,29 @@ class Image(Base):
     message: Mapped["Message"] = relationship("Message", back_populates="images")
     analysis: Mapped["ImageAnalysis | None"] = relationship(
         "ImageAnalysis", back_populates="image", uselist=False
+    )
+
+
+class Video(Base):
+    __tablename__ = "videos"
+    __table_args__ = (
+        UniqueConstraint("message_id", "file_url", name="_message_video_url_uc"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"))
+    file_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    file_unique: Mapped[str | None] = mapped_column(String, nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    local_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    downloaded: Mapped[bool] = mapped_column(Boolean, default=False)
+    title: Mapped[str] = mapped_column(String, default="")
+    intro: Mapped[str] = mapped_column(Text, default="")
+
+    message: Mapped["Message"] = relationship("Message", back_populates="videos")
+    analysis: Mapped["ImageAnalysis | None"] = relationship(
+        "ImageAnalysis", back_populates="video", uselist=False
     )
 
 
@@ -166,6 +196,7 @@ class ImageAnalysis(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     image_id: Mapped[int | None] = mapped_column(ForeignKey("images.id"), nullable=True)
+    video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), nullable=True)
     message_id: Mapped[int | None] = mapped_column(
         ForeignKey("messages.id"), nullable=True
     )
@@ -174,6 +205,7 @@ class ImageAnalysis(Base):
     model_used: Mapped[str] = mapped_column(String, default="")
     analysis_json: Mapped[str] = mapped_column(Text, nullable=False)
     image_type: Mapped[str] = mapped_column(String, default="")
+    semantic_text: Mapped[str] = mapped_column(Text, default="")
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     prompt_version: Mapped[str] = mapped_column(String, default="")
     schema_version: Mapped[str] = mapped_column(String, default="")
@@ -183,6 +215,7 @@ class ImageAnalysis(Base):
     )
 
     image: Mapped["Image | None"] = relationship("Image", back_populates="analysis")
+    video: Mapped["Video | None"] = relationship("Video", back_populates="analysis")
     message: Mapped["Message | None"] = relationship("Message")
 
 

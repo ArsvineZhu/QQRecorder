@@ -185,6 +185,7 @@ class RecorderBridge:
         return select(Message).options(
             selectinload(Message.segments),
             selectinload(Message.images),
+            selectinload(Message.videos),
             selectinload(Message.replies),
             selectinload(Message.forward_messages).options(
                 selectinload(ForwardMessage.children)
@@ -206,3 +207,37 @@ def _first_reply_id(message) -> str | None:
         return None
     value = getattr(replies[0], "reply_to_message_id", None)
     return str(value) if value else None
+
+
+async def save_analysis(
+    bridge: RecorderBridge | None,
+    *,
+    file_unique: str,
+    model_used: str,
+    analysis_json: str,
+    media_type: str = "image",
+    image_type: str = "",
+    semantic_text: str = "",
+    confidence: float = 0.0,
+    prompt_version: str = "",
+    schema_version: str = "",
+    image_id: int | None = None,
+    video_id: int | None = None,
+    message_db_id: int | None = None,
+) -> None:
+    if bridge is None or bridge.storage is None:
+        return
+    await bridge.storage.save_image_analysis(
+        file_unique=file_unique,
+        model_used=model_used,
+        analysis_json=analysis_json,
+        media_type=media_type,
+        image_type=image_type,
+        semantic_text=semantic_text,
+        confidence=confidence,
+        prompt_version=prompt_version,
+        schema_version=schema_version,
+        image_id=image_id,
+        video_id=video_id,
+        message_id=message_db_id,
+    )

@@ -110,7 +110,7 @@ class RecorderBridge:
     async def get_reply_chain(
         self, source_msg: Message, *, max_depth: int
     ) -> list[Message]:
-        chain: list[Message] = []
+        chain: list[Message] = [source_msg]
         current = source_msg
         visited = {str(getattr(source_msg, "message_id", "") or "")}
         for _ in range(max_depth):
@@ -185,6 +185,7 @@ class RecorderBridge:
         return select(Message).options(
             selectinload(Message.segments),
             selectinload(Message.images),
+            selectinload(Message.videos),
             selectinload(Message.replies),
             selectinload(Message.forward_messages).options(
                 selectinload(ForwardMessage.children)
@@ -219,10 +220,12 @@ async def save_analysis(
     analysis_json: str,
     media_type: str = "image",
     image_type: str = "",
+    semantic_text: str = "",
     confidence: float = 0.0,
     prompt_version: str = "",
     schema_version: str = "",
     image_id: int | None = None,
+    video_id: int | None = None,
     message_db_id: int | None = None,
 ) -> None:
     if bridge is None or bridge.storage is None:
@@ -233,10 +236,12 @@ async def save_analysis(
         analysis_json=analysis_json,
         media_type=media_type,
         image_type=image_type,
+        semantic_text=semantic_text,
         confidence=confidence,
         prompt_version=prompt_version,
         schema_version=schema_version,
         image_id=image_id,
+        video_id=video_id,
         message_id=message_db_id,
     )
 

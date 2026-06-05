@@ -57,6 +57,7 @@ python scripts/migrate_add_is_sticker.py --dry-run
 python scripts/migrate_add_app_share.py --dry-run
 python scripts/backfill_sticker_flags.py --dry-run
 python scripts/backfill_sticker_flags.py --start-id 100 --end-id 200
+python scripts/backfill_recorder_media_history.py --dry-run
 ```
 
 ## Notes
@@ -69,3 +70,5 @@ python scripts/backfill_sticker_flags.py --start-id 100 --end-id 200
 - `migrate_add_app_share.py` adds app-share storage columns and tables.
 - `backfill_sticker_flags.py` runs the real sticker detector against stored image
   records.
+- `backfill_recorder_media_history.py` backfills recoverable bot messages from
+  trace tables and regenerates missing `semantic_text` for stored media analyses.

@@ -21,6 +21,10 @@ def validate_config(settings: AgentPluginSettings) -> None:
         raise ValueError(
             "agent.max_tool_calls_total must be >= agent.max_tool_calls_per_turn"
         )
+    if not str(settings.prompt.assistant_name or "").strip():
+        raise ValueError("prompt.assistant_name must not be empty")
+    if settings.prompt.context_message_preview_chars <= 0:
+        raise ValueError("prompt.context_message_preview_chars must be > 0")
     if not settings.trigger.prefixes:
         raise ValueError("trigger.prefixes must not be empty")
 

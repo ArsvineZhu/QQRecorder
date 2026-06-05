@@ -11,8 +11,20 @@ class ImageInfo:
     file_url: str
     file_unique: str
     file_size: int
+    local_path: str = ""
     is_sticker: bool = False
     sticker_confidence: float = 0.0
+
+
+@dataclass
+class VideoInfo:
+    file_url: str
+    file_unique: str
+    file_size: int
+    duration_sec: int = 0
+    title: str = ""
+    intro: str = ""
+    local_path: str = ""
 
 
 @dataclass
@@ -47,13 +59,23 @@ class ParsedMessage:
     has_app_share: bool
     segments: list[dict]
     images: list[ImageInfo]
+    videos: list[VideoInfo]
     replies: list[ReplyInfo]
     at_mentions: list[AtInfo]
     forward_ids: list[str]
     app_shares: list[AppShareInfo]
 
 
-ALLOWED_SEGMENT_TYPES = {"text", "image", "at", "reply", "forward", "face", "json"}
+ALLOWED_SEGMENT_TYPES = {
+    "text",
+    "image",
+    "video",
+    "at",
+    "reply",
+    "forward",
+    "face",
+    "json",
+}
 
 
 def extract_text(segments: list[dict]) -> str:
@@ -86,11 +108,46 @@ def extract_images(segments: list[dict], raw_message: str = "") -> list[ImageInf
                     file_url=file_url,
                     file_unique=file_unique,
                     file_size=file_size,
+                    local_path=str(data.get("file") or data.get("path") or ""),
                     is_sticker=is_sticker,
                     sticker_confidence=sticker_confidence,
                 )
             )
     return images
+
+
+def extract_videos(segments: list[dict]) -> list[VideoInfo]:
+    videos = []
+    for seg in segments:
+        if seg["type"] != "video":
+            continue
+        data = seg["data"]
+        file_url = str(data.get("url", "") or "")
+        file_unique = str(
+            data.get("file_unique") or data.get("md5") or data.get("file_md5") or "0"
+        )
+        try:
+            file_size = int(data.get("file_size") or data.get("size") or 0)
+        except (ValueError, TypeError):
+            file_size = 0
+        try:
+            duration_sec = int(
+                data.get("duration") or data.get("seconds") or data.get("time") or 0
+            )
+        except (ValueError, TypeError):
+            duration_sec = 0
+        videos.append(
+            VideoInfo(
+                file_url=file_url,
+                file_unique=file_unique,
+                file_size=file_size,
+                duration_sec=duration_sec,
+                title=str(data.get("title", "") or ""),
+                intro=str(data.get("desc", "") or ""),
+                local_path=str(data.get("file") or data.get("path") or ""),
+            )
+        )
+    return videos
 
 
 def extract_replies(segments: list[dict]) -> list[ReplyInfo]:
@@ -232,6 +289,7 @@ def build_segments_data(message_segments: list[dict]) -> list[dict]:
 def parse_message(message_segments: list[dict], raw_message: str = "") -> ParsedMessage:
     text = extract_text(message_segments)
     images = extract_images(message_segments, raw_message)
+    videos = extract_videos(message_segments)
     replies = extract_replies(message_segments)
     at_mentions = extract_at_mentions(message_segments)
     forward_ids = extract_forward_ids(message_segments, raw_message)
@@ -247,6 +305,7 @@ def parse_message(message_segments: list[dict], raw_message: str = "") -> Parsed
         has_app_share=len(app_shares) > 0,
         segments=segments,
         images=images,
+        videos=videos,
         replies=replies,
         at_mentions=at_mentions,
         forward_ids=forward_ids,

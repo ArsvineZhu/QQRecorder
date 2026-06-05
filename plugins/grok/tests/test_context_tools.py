@@ -37,6 +37,8 @@ def _message(message_id: str, raw_message: str):
     return SimpleNamespace(
         message_id=message_id,
         user_id="20001",
+        sender_nickname="测试昵称",
+        sender_card="",
         group_id="30001",
         chat_type="group",
         raw_message=raw_message,
@@ -64,6 +66,7 @@ def test_track_reply_returns_root_and_messages():
         assert result.status == "ok"
         assert result.data["root_message_id"] == "m-quote"
         assert result.data["messages"][0]["raw_message"] == "引用"
+        assert result.data["messages"][0]["sender_nickname"] == "测试昵称"
 
     asyncio.run(_run())
 
@@ -112,5 +115,26 @@ def test_load_context_returns_recent_window_messages():
             "m-a",
             "m-b",
         ]
+
+    asyncio.run(_run())
+
+
+def test_load_message_returns_single_message_payload():
+    async def _run():
+        source = _message("m-current", "当前")
+        plugin = SimpleNamespace(_bridge=_BridgeStub(source))
+        tool = next(
+            item for item in build_context_tools(plugin) if item.name == "load_message"
+        )
+
+        result = await tool.handler(
+            {"source_msg": source},
+            {"message_id": "m-current"},
+        )
+
+        assert result.status == "ok"
+        assert result.data["message"]["message_id"] == "m-current"
+        assert result.data["message"]["raw_message"] == "当前"
+        assert result.data["message"]["sender_nickname"] == "测试昵称"
 
     asyncio.run(_run())

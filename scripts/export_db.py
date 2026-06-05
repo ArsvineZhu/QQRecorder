@@ -9,6 +9,8 @@ Usage:
         # Messages with joined data
     python scripts/export_db.py images [--downloaded] [--missing] [-n N]
         # Image records
+    python scripts/export_db.py videos [--downloaded] [--missing] [-n N]
+        # Video records
     python scripts/export_db.py search <keyword> [-n N]
         # Full-text search in raw_message
     python scripts/export_db.py export [--format FORMAT] [--output FILE]
@@ -254,6 +256,13 @@ def cmd_summary(conn, _args):
     if r[0]:
         print(f"\n  Images: {r[0]} total, {r[1]} downloaded, {r[0] - r[1]} pending")
 
+    cur.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN downloaded THEN 1 ELSE 0 END) FROM videos"
+    )
+    r = cur.fetchone()
+    if r[0]:
+        print(f"\n  Videos: {r[0]} total, {r[1]} downloaded, {r[0] - r[1]} pending")
+
     # Distinct chats
     cur.execute(
         "SELECT chat_type, "
@@ -402,7 +411,7 @@ def cmd_messages(conn, args):
     cur.execute(
         f"""
         SELECT id, message_id, user_id, group_id, chat_type, timestamp,
-               raw_message, has_image, has_reply, has_forward, has_at
+               raw_message, has_image, has_reply, has_forward, has_video, has_at
         FROM messages {where}
         ORDER BY timestamp DESC
         LIMIT ?
@@ -422,6 +431,8 @@ def cmd_messages(conn, args):
         if r[9]:
             flags.append("fwd")
         if r[10]:
+            flags.append("video")
+        if r[11]:
             flags.append("@")
         display_rows.append(
             [
@@ -494,6 +505,64 @@ def cmd_images(conn, args):
         )
 
     _print_table(headers, display_rows, f"Images (showing {len(rows)}/{total})")
+    print()
+
+
+def cmd_videos(conn, args):
+    """Video records."""
+    cur = conn.cursor()
+
+    conditions = []
+    params = []
+
+    if args.downloaded:
+        conditions.append("downloaded = 1")
+    if args.missing:
+        conditions.append("(downloaded = 0 OR local_path IS NULL)")
+
+    where = ""
+    if conditions:
+        where = "WHERE " + " AND ".join(conditions)
+
+    cur.execute(f"SELECT COUNT(*) FROM videos {where}", params)
+    total = cur.fetchone()[0]
+
+    cur.execute(
+        f"""
+        SELECT v.id, v.message_id, v.file_size, v.downloaded, v.local_path,
+               v.duration_sec, v.title, m.chat_type, m.group_id, m.user_id
+        FROM videos v
+        JOIN messages m ON v.message_id = m.id
+        {where}
+        ORDER BY v.id DESC
+        LIMIT ?
+        """,
+        params + [args.limit],
+    )
+    rows = cur.fetchall()
+
+    headers = ["ID", "MsgID", "Size", "DL", "Local Path", "Duration", "Title", "Chat"]
+    display_rows = []
+    for r in rows:
+        size_str = _fmt_size(r[2])
+        path_str = os.path.basename(r[4]) if r[4] else "(not downloaded)"
+        chat = r[7] or "?"
+        chat_id = r[8] or r[9] or "?"
+        duration = f"{r[5]}s" if r[5] else "-"
+        display_rows.append(
+            [
+                str(r[0]),
+                str(r[1]),
+                size_str,
+                "Y" if r[3] else "N",
+                _truncate(path_str, 40),
+                duration,
+                _truncate(r[6] or "-", 24),
+                f"{chat}:{chat_id}",
+            ]
+        )
+
+    _print_table(headers, display_rows, f"Videos (showing {len(rows)}/{total})")
     print()
 
 
@@ -676,6 +745,7 @@ def cmd_stats(conn, _args):
             SUM(CASE WHEN has_image THEN 1 ELSE 0 END) as with_img,
             SUM(CASE WHEN has_reply THEN 1 ELSE 0 END) as with_reply,
             SUM(CASE WHEN has_forward THEN 1 ELSE 0 END) as with_fwd,
+            SUM(CASE WHEN has_video THEN 1 ELSE 0 END) as with_video,
             SUM(CASE WHEN has_at THEN 1 ELSE 0 END) as with_at,
             COUNT(*) as total
         FROM messages
@@ -684,11 +754,12 @@ def cmd_stats(conn, _args):
     r = cur.fetchone()
     if r:
         print("\n  Message composition:")
-        print(f"    Total:      {r[4]}")
-        print(f"    With image: {r[0]} ({_pct(r[0], r[4])})")
-        print(f"    With reply: {r[1]} ({_pct(r[1], r[4])})")
-        print(f"    With fwd:   {r[2]} ({_pct(r[2], r[4])})")
-        print(f"    With @:     {r[3]} ({_pct(r[3], r[4])})")
+        print(f"    Total:      {r[5]}")
+        print(f"    With image: {r[0]} ({_pct(r[0], r[5])})")
+        print(f"    With reply: {r[1]} ({_pct(r[1], r[5])})")
+        print(f"    With fwd:   {r[2]} ({_pct(r[2], r[5])})")
+        print(f"    With video: {r[3]} ({_pct(r[3], r[5])})")
+        print(f"    With @:     {r[4]} ({_pct(r[4], r[5])})")
 
     print()
 
@@ -703,6 +774,7 @@ COMMANDS = {
     "table": cmd_table,
     "messages": cmd_messages,
     "images": cmd_images,
+    "videos": cmd_videos,
     "search": cmd_search,
     "stats": cmd_stats,
     "export": cmd_export,
@@ -765,6 +837,16 @@ def main():
     sub.add_argument("--downloaded", action="store_true", help="Only downloaded images")
     sub.add_argument(
         "--missing", action="store_true", help="Only missing/undownloaded images"
+    )
+    sub.add_argument(
+        "-n", "--limit", type=int, default=20, help="Row limit (default: 20)"
+    )
+
+    # videos
+    sub = subparsers.add_parser("videos", help="Video records")
+    sub.add_argument("--downloaded", action="store_true", help="Only downloaded videos")
+    sub.add_argument(
+        "--missing", action="store_true", help="Only missing/undownloaded videos"
     )
     sub.add_argument(
         "-n", "--limit", type=int, default=20, help="Row limit (default: 20)"

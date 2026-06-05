@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "message_id": {
+      "type": "string",
+      "description": "要读取的记录消息 ID。通常来自上下文中的 msg-id。"
+    }
+  },
+  "required": ["message_id"]
+}

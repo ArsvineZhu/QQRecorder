@@ -26,6 +26,7 @@ from ..context.render import (
     strip_prefix,
 )
 from ..context.types import BuiltContext
+from ..infra import save_analysis
 from ..vision import (
     analyze_video,
     detect_image_intent,
@@ -39,7 +40,8 @@ from ..vision import (
 from ..vision.analyzer import analyze_image as _analyze_image
 from ..vision.cache import VisionCacheStore
 from ..vision.quota import VisionQuotaTracker
-from ..vision.schemas import VisualAnalysis
+from ..vision.schemas import VisualAnalysis, analysis_to_dict
+from ..vision.video_schemas import video_analysis_to_dict
 
 if TYPE_CHECKING:
     from openai import OpenAI
@@ -192,6 +194,12 @@ class VisionBridge:
                 ttl_days=vision.cache_ttl_days,
             )
             if cached is not None:
+                await self._persist_visual_analysis(
+                    source_msg,
+                    image,
+                    cached,
+                    model_used=model,
+                )
                 results.append(render_visual_context(cached))
                 continue
 
@@ -233,6 +241,12 @@ class VisionBridge:
                                 escalated,
                             )
                     if not analysis.error_code:
+                        await self._persist_visual_analysis(
+                            source_msg,
+                            image,
+                            analysis,
+                            model_used=vision.image_fast_model,
+                        )
                         results.append(render_visual_context(analysis))
                     continue
 
@@ -268,6 +282,12 @@ class VisionBridge:
                             escalated,
                         )
 
+            await self._persist_visual_analysis(
+                source_msg,
+                image,
+                analysis,
+                model_used=model,
+            )
             results.append(render_visual_context(analysis))
 
         return results
@@ -397,6 +417,12 @@ class VisionBridge:
             ttl_days=vision.cache_ttl_days,
         )
         if cached is not None:
+            await self._persist_video_analysis(
+                source_msg,
+                video_source,
+                file_unique,
+                cached,
+            )
             return render_video_context(cached)
 
         analysis = await analyze_video(
@@ -424,6 +450,12 @@ class VisionBridge:
                 cache_version,
                 analysis,
             )
+        await self._persist_video_analysis(
+            source_msg,
+            video_source,
+            file_unique,
+            analysis,
+        )
         return render_video_context(analysis)
 
     async def _build_light_vision_context(self, source_msg, event) -> str:
@@ -533,6 +565,20 @@ class VisionBridge:
         return None
 
     def _extract_video_sources(self, event, source_msg) -> list[VideoSource]:
+        stored_videos = getattr(source_msg, "videos", []) or []
+        if stored_videos:
+            return [
+                VideoSource(
+                    url=_clean_string(getattr(video, "file_url", None)),
+                    local_path=_clean_string(getattr(video, "local_path", None)),
+                    file_size=_maybe_int(getattr(video, "file_size", None)),
+                    duration_sec=_maybe_int(getattr(video, "duration_sec", None)),
+                    title=_clean_string(getattr(video, "title", None)) or "",
+                    intro=_clean_string(getattr(video, "intro", None)) or "",
+                )
+                for video in stored_videos
+            ]
+
         results: list[VideoSource] = []
         seen: set[tuple[str | None, str | None]] = set()
         for segment in self._iter_segments(event, source_msg):
@@ -677,6 +723,70 @@ class VisionBridge:
         quota = self.plugin._vision_quota
         assert quota is not None
         return quota
+
+    async def _persist_visual_analysis(
+        self,
+        message,
+        image,
+        analysis: VisualAnalysis,
+        *,
+        model_used: str,
+    ) -> None:
+        file_unique = str(getattr(image, "file_unique", "") or "")
+        if not file_unique:
+            return
+        payload = analysis_to_dict(analysis)
+        await save_analysis(
+            self.plugin._bridge,
+            file_unique=file_unique,
+            model_used=model_used,
+            analysis_json=json.dumps(payload, ensure_ascii=False),
+            media_type="image",
+            image_type=payload.get("image_type", "") or "",
+            semantic_text=render_visual_context(analysis),
+            confidence=analysis.confidence,
+            prompt_version=self.settings.vision.prompt_version,
+            schema_version=self.settings.vision.schema_version,
+            image_id=getattr(image, "id", None),
+            message_db_id=getattr(message, "id", None),
+        )
+
+    async def _persist_video_analysis(
+        self,
+        message,
+        video_source: VideoSource,
+        file_unique: str,
+        analysis,
+    ) -> None:
+        payload = video_analysis_to_dict(analysis)
+        video_id = None
+        for video in getattr(message, "videos", []) or []:
+            same_local = (
+                video_source.local_path
+                and _clean_string(getattr(video, "local_path", None))
+                == video_source.local_path
+            )
+            same_url = (
+                video_source.url
+                and _clean_string(getattr(video, "file_url", None)) == video_source.url
+            )
+            if same_local or same_url:
+                video_id = getattr(video, "id", None)
+                break
+        await save_analysis(
+            self.plugin._bridge,
+            file_unique=file_unique,
+            model_used=self.settings.vision.video_summary_model,
+            analysis_json=json.dumps(payload, ensure_ascii=False),
+            media_type="video",
+            image_type=payload.get("video_type", "") or payload.get("media_type", ""),
+            semantic_text=render_video_context(analysis),
+            confidence=analysis.confidence,
+            prompt_version=self.settings.vision.prompt_version,
+            schema_version=self.settings.vision.schema_version,
+            video_id=video_id,
+            message_db_id=getattr(message, "id", None),
+        )
 
     @staticmethod
     def _image_file_size(image) -> int | None:

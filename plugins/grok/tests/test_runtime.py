@@ -100,3 +100,55 @@ def test_agent_step_summary_keeps_status_and_tool_name():
     assert step.kind == "tool"
     assert step.tool_name == "load_profile"
     assert step.status == "ok"
+
+
+def test_agent_runtime_uses_configured_assistant_name_in_max_steps_fallback():
+    async def _run():
+        settings = SimpleNamespace(
+            agent=SimpleNamespace(max_steps=1, max_tool_calls_per_turn=1),
+            prompt=SimpleNamespace(assistant_name="博士"),
+            profile=SimpleNamespace(),
+        )
+        plugin = SimpleNamespace(
+            settings=settings,
+            api=SimpleNamespace(ai=object()),
+            logger=SimpleNamespace(info=lambda *args, **kwargs: None),
+        )
+        runtime = AgentRuntime(
+            plugin,
+            registry=_FakeRegistry(),
+            model_runner=lambda **kwargs: asyncio.sleep(
+                0,
+                result=SimpleNamespace(
+                    text="",
+                    tool_calls=[AgentToolCall(name="load_profile", arguments={})],
+                    model_name="demo",
+                    request_summary="step1",
+                    response_summary="tool",
+                ),
+            ),
+        )
+        source_msg = SimpleNamespace(
+            chat_type="group",
+            group_id="30001",
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="/agent 看看这个",
+        )
+        event = SimpleNamespace(
+            group_id="30001",
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="/agent 看看这个",
+        )
+
+        outcome = await runtime.run(
+            event=event,
+            source_msg=source_msg,
+            trigger_reason="prefix:/agent",
+        )
+
+        assert outcome.error_code == "max_steps_exceeded"
+        assert outcome.text == "Agent 运行达到最大步数，博士.exe 已停止运行"
+
+    asyncio.run(_run())

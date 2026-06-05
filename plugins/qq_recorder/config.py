@@ -21,6 +21,7 @@ class TargetConfig:
 class StorageConfig:
     database: str = "data/recorder.db"
     images_dir: str = "data/images"
+    videos_dir: str = "data/videos"
     lock_retry: "LockRetryConfig" = field(default_factory=lambda: LockRetryConfig())
 
 
@@ -39,9 +40,18 @@ class ImageConfig:
 
 
 @dataclass
+class VideoConfig:
+    download: bool = True
+    timeout: int = 60
+    max_file_size: int = 524288000
+    max_duration_sec: int = 1800
+
+
+@dataclass
 class ProcessingConfig:
     max_inflight: int = 48
     image_download_concurrency: int = 4
+    video_download_concurrency: int = 2
 
 
 @dataclass
@@ -66,6 +76,7 @@ class RecorderSettings:
     monitor_all: bool = True
     storage: StorageConfig = field(default_factory=StorageConfig)
     image: ImageConfig = field(default_factory=ImageConfig)
+    video: VideoConfig = field(default_factory=VideoConfig)
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     forward: ForwardConfig = field(default_factory=ForwardConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
@@ -77,10 +88,21 @@ DEFAULT_CONFIG = {
     "storage": {
         "database": "data/recorder.db",
         "images_dir": "data/images",
+        "videos_dir": "data/videos",
         "lock_retry": {"enabled": True, "max_retries": 5, "base_delay_ms": 50},
     },
     "image": {"download": True, "timeout": 30, "max_file_size": 52428800},
-    "processing": {"max_inflight": 48, "image_download_concurrency": 4},
+    "video": {
+        "download": True,
+        "timeout": 60,
+        "max_file_size": 524288000,
+        "max_duration_sec": 1800,
+    },
+    "processing": {
+        "max_inflight": 48,
+        "image_download_concurrency": 4,
+        "video_download_concurrency": 2,
+    },
     "forward": {"max_depth": 10, "parse_content": True},
     "backup": {
         "enabled": True,
@@ -98,6 +120,7 @@ def build_config(raw: dict) -> RecorderSettings:
     storage_data = raw.get("storage", {})
     lock_retry_data = storage_data.get("lock_retry", {})
     image_data = raw.get("image", {})
+    video_data = raw.get("video", {})
     processing_data = raw.get("processing", {})
     forward_data = raw.get("forward", {})
     backup_data = raw.get("backup", {})
@@ -122,12 +145,21 @@ def build_config(raw: dict) -> RecorderSettings:
         images_dir=storage_data.get(
             "images_dir", DEFAULT_CONFIG["storage"]["images_dir"]
         ),
+        videos_dir=storage_data.get(
+            "videos_dir", DEFAULT_CONFIG["storage"]["videos_dir"]
+        ),
         lock_retry=lock_retry,
     )
     image = ImageConfig(
         download=image_data.get("download", True),
         timeout=image_data.get("timeout", 30),
         max_file_size=image_data.get("max_file_size", 52428800),
+    )
+    video = VideoConfig(
+        download=video_data.get("download", True),
+        timeout=video_data.get("timeout", 60),
+        max_file_size=video_data.get("max_file_size", 524288000),
+        max_duration_sec=video_data.get("max_duration_sec", 1800),
     )
     processing = ProcessingConfig(
         max_inflight=processing_data.get(
@@ -136,6 +168,10 @@ def build_config(raw: dict) -> RecorderSettings:
         image_download_concurrency=processing_data.get(
             "image_download_concurrency",
             DEFAULT_CONFIG["processing"]["image_download_concurrency"],
+        ),
+        video_download_concurrency=processing_data.get(
+            "video_download_concurrency",
+            DEFAULT_CONFIG["processing"]["video_download_concurrency"],
         ),
     )
     forward = ForwardConfig(
@@ -164,6 +200,7 @@ def build_config(raw: dict) -> RecorderSettings:
         monitor_all=raw.get("monitor_all", True),
         storage=storage,
         image=image,
+        video=video,
         processing=processing,
         forward=forward,
         backup=backup,
@@ -178,6 +215,8 @@ def _validate_config(config: RecorderSettings) -> None:  # noqa: C901
         raise ValueError("storage.database must be a non-empty string")
     if not config.storage.images_dir.strip():
         raise ValueError("storage.images_dir must be a non-empty string")
+    if not config.storage.videos_dir.strip():
+        raise ValueError("storage.videos_dir must be a non-empty string")
     if config.storage.lock_retry.max_retries < 0:
         raise ValueError("storage.lock_retry.max_retries must be >= 0")
     if config.storage.lock_retry.base_delay_ms <= 0:
@@ -186,10 +225,18 @@ def _validate_config(config: RecorderSettings) -> None:  # noqa: C901
         raise ValueError("image.timeout must be > 0")
     if config.image.max_file_size <= 0:
         raise ValueError("image.max_file_size must be > 0")
+    if config.video.timeout <= 0:
+        raise ValueError("video.timeout must be > 0")
+    if config.video.max_file_size <= 0:
+        raise ValueError("video.max_file_size must be > 0")
+    if config.video.max_duration_sec <= 0:
+        raise ValueError("video.max_duration_sec must be > 0")
     if config.processing.max_inflight <= 0:
         raise ValueError("processing.max_inflight must be > 0")
     if config.processing.image_download_concurrency <= 0:
         raise ValueError("processing.image_download_concurrency must be > 0")
+    if config.processing.video_download_concurrency <= 0:
+        raise ValueError("processing.video_download_concurrency must be > 0")
     if config.forward.max_depth <= 0 or config.forward.max_depth > 50:
         raise ValueError("forward.max_depth must be > 0 and <= 50")
     if not config.backup.output_dir.strip():

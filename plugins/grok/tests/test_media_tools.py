@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 from plugins.grok.tools import media_tools
+from plugins.grok.vision.schemas import normalize_analysis
 from plugins.grok.vision.video_schemas import VideoAnalysis
 
 
@@ -240,5 +241,111 @@ def test_read_video_checks_quota_before_paid_model(monkeypatch):
         assert result.retryable is False
         assert result.data == {"media_type": "video"}
         assert quota.video_calls == [("20002", "30001")]
+
+    asyncio.run(_run())
+
+
+def test_read_picture_persists_semantic_text(tmp_path, monkeypatch):
+    async def _run():
+        image_path = tmp_path / "image.bin"
+        image_path.write_bytes(b"not-really-an-image")
+        plugin = SimpleNamespace(
+            _vision_client=object(),
+            _vision_cache=_CacheStub(),
+            _vision_quota=None,
+            _bridge=None,
+            settings=_settings(),
+        )
+        message = SimpleNamespace(
+            id=10,
+            user_id="20001",
+            group_id="30001",
+            raw_message="图片消息",
+            images=[
+                SimpleNamespace(id=1, local_path=str(image_path), file_unique="fu")
+            ],
+        )
+        captured = {}
+
+        async def _analyze_image(*args, **kwargs):
+            del args, kwargs
+            return normalize_analysis(
+                {
+                    "image_type": "meme",
+                    "literal_content": {"summary": "图里有一段文字"},
+                    "semantic_interpretation": {"main_meaning": "在吐槽加班"},
+                    "confidence": 0.8,
+                }
+            )
+
+        async def _persist_analysis(*args, **kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(media_tools, "analyze_image", _analyze_image)
+        monkeypatch.setattr(media_tools, "_persist_analysis", _persist_analysis)
+
+        result = await _media_tool(plugin, "read_picture").handler(
+            {"source_msg": message, "user_id": "20001", "chat_id": "30001"},
+            {},
+        )
+
+        assert result.status == "ok"
+        assert "图片类型：meme" in captured["semantic_text"]
+        assert "画面概述：图里有一段文字" in captured["semantic_text"]
+        assert "核心含义：在吐槽加班" in captured["semantic_text"]
+
+    asyncio.run(_run())
+
+
+def test_read_video_persists_semantic_text(monkeypatch):
+    async def _run():
+        plugin = SimpleNamespace(
+            _vision_client=object(),
+            _vision_cache=_CacheStub(),
+            _vision_quota=None,
+            _bridge=None,
+            settings=_settings(),
+        )
+        message = SimpleNamespace(
+            id=20,
+            user_id="20002",
+            group_id="30001",
+            raw_message="视频消息",
+            segments=[
+                SimpleNamespace(
+                    segment_type="video",
+                    segment_data=json.dumps(
+                        {"url": "https://example.test/video.mp4", "file": "/tmp/v.mp4"}
+                    ),
+                )
+            ],
+        )
+        captured = {}
+
+        async def _analyze_video(*args, **kwargs):
+            del args, kwargs
+            return VideoAnalysis(
+                video_type="screen_recording",
+                duration_summary="约 24 秒",
+                visual_summary="录屏展示聊天窗口",
+                semantic_meaning="在说明沟通混乱",
+                confidence=0.7,
+            )
+
+        async def _persist_analysis(*args, **kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(media_tools, "analyze_video", _analyze_video)
+        monkeypatch.setattr(media_tools, "_persist_analysis", _persist_analysis)
+
+        result = await _media_tool(plugin, "read_video").handler(
+            {"source_msg": message, "user_id": "20002", "chat_id": "30001"},
+            {},
+        )
+
+        assert result.status == "ok"
+        assert "视频类型：screen_recording" in captured["semantic_text"]
+        assert "时长：约 24 秒" in captured["semantic_text"]
+        assert "核心含义：在说明沟通混乱" in captured["semantic_text"]
 
     asyncio.run(_run())

@@ -9,13 +9,21 @@ image:
   timeout: 60
   max_file_size: 52428800
 
+video:
+  download: true
+  timeout: 60
+  max_file_size: 524288000
+  max_duration_sec: 1800
+
 processing:
   max_inflight: 48
   image_download_concurrency: 4
+  video_download_concurrency: 2
 
 storage:
   database: data/recorder.db
   images_dir: data/images
+  videos_dir: data/videos
   lock_retry:
     enabled: true
     max_retries: 5

@@ -85,10 +85,14 @@ class AgentRuntime:
             ),
             evidence=[],
             step_budget=int(getattr(self.plugin.settings.agent, "max_steps", 4) or 4),
+            tool_call_budget_total=_tool_call_total_budget(self.plugin.settings.agent),
+            tool_call_budget_remaining=_tool_call_total_budget(
+                self.plugin.settings.agent
+            ),
         )
         steps: list[AgentStep] = []
         total_tool_calls = 0
-        max_tool_calls_total = _tool_call_total_budget(self.plugin.settings.agent)
+        max_tool_calls_total = working_context.tool_call_budget_total
         seen_track_reply_keys: set[tuple[str, int]] = set()
 
         for _ in range(working_context.step_budget):
@@ -101,7 +105,7 @@ class AgentRuntime:
             if not turn.tool_calls:
                 text = turn.text.strip()
                 if not text:
-                    text = "暂时没有足够的信息来回答你"
+                    text = "模型无回复，请告诉 Arsvine 我的 AI 出问题了"
                     logger.info("runtime: empty model response, using fallback")
                 return AgentOutcome(
                     text=text,
@@ -121,6 +125,9 @@ class AgentRuntime:
                     summary="",
                 )
                 if total_tool_calls >= max_tool_calls_total:
+                    working_context.tool_call_budget_remaining = max(
+                        0, max_tool_calls_total - total_tool_calls
+                    )
                     budget_response = ToolResponse(
                         status="failed",
                         data={},
@@ -148,7 +155,7 @@ class AgentRuntime:
                         tool_call.name,
                     )
                     return AgentOutcome(
-                        text="这条消息的上下文工具查询次数已经达到上限，我先不继续查了",
+                        text="上下文工具查询次数已经达到上限，查询异常",
                         working_context=working_context,
                         steps=steps,
                         model_name=getattr(turn, "model_name", "") or "",
@@ -162,8 +169,19 @@ class AgentRuntime:
                 )
                 if duplicate_response is not None:
                     total_tool_calls += 1
+                    working_context.tool_call_budget_remaining = max(
+                        0, max_tool_calls_total - total_tool_calls
+                    )
                     step.status = "skipped"
-                    step.summary = _normalize_result_payload(duplicate_response)
+                    step.summary = _normalize_result_payload(
+                        duplicate_response,
+                        limit=getattr(
+                            self.plugin.settings.agent,
+                            "max_evidence_chars",
+                            6000,
+                        ),
+                        tool_name=tool_call.name,
+                    )
                     steps.append(step)
                     working_context.evidence.append(
                         EvidenceBlock(
@@ -178,13 +196,7 @@ class AgentRuntime:
                         "runtime: duplicate track_reply skipped args=%s",
                         tool_call.arguments,
                     )
-                    return AgentOutcome(
-                        text="我已经查过这条回复链，记录里没有更多可用结果；请补充原消息内容，或我先按当前消息判断。",
-                        working_context=working_context,
-                        steps=steps,
-                        model_name=getattr(turn, "model_name", "") or "",
-                        error_code="duplicate_track_reply",
-                    )
+                    continue
 
                 logger.info(
                     "runtime: execute tool=%s args=%s",
@@ -193,6 +205,9 @@ class AgentRuntime:
                 )
                 try:
                     total_tool_calls += 1
+                    working_context.tool_call_budget_remaining = max(
+                        0, max_tool_calls_total - total_tool_calls
+                    )
                     result = await self.registry.execute(
                         tool_call.name,
                         tool_call.arguments,
@@ -220,13 +235,14 @@ class AgentRuntime:
                     )
                 else:
                     step.status = "ok"
-                    rendered = _clip_text(
-                        _normalize_result_payload(result),
-                        getattr(
+                    rendered = _normalize_result_payload(
+                        result,
+                        limit=getattr(
                             self.plugin.settings.agent,
                             "max_evidence_chars",
                             6000,
                         ),
+                        tool_name=tool_call.name,
                     )
                     step.summary = rendered
                     logger.info(
@@ -246,7 +262,10 @@ class AgentRuntime:
                 steps.append(step)
 
         return AgentOutcome(
-            text="很抱歉，请告诉 Arsvine 我的 AI 出问题了",
+            text=(
+                f"Agent 运行达到最大步数，{_assistant_name(self.plugin.settings)}."
+                "exe 已停止运行"
+            ),
             working_context=working_context,
             steps=steps,
             model_name="",
@@ -282,6 +301,11 @@ def _tool_call_total_budget(agent_settings: Any) -> int:
     max_steps = max(1, int(getattr(agent_settings, "max_steps", 4) or 4))
     per_turn = max(1, int(getattr(agent_settings, "max_tool_calls_per_turn", 3) or 3))
     return max_steps * per_turn
+
+
+def _assistant_name(settings: Any) -> str:
+    prompt = getattr(settings, "prompt", None)
+    return str(getattr(prompt, "assistant_name", "Grok") or "Grok").strip()
 
 
 def _check_duplicate_track_reply(
@@ -330,25 +354,245 @@ def _chat_type(event) -> str:
     return "group" if getattr(event, "group_id", None) is not None else "private"
 
 
-def _normalize_result_payload(result: Any) -> str:
+def _normalize_result_payload(
+    result: Any,
+    *,
+    limit: int | None = None,
+    tool_name: str = "",
+) -> str:
     if isinstance(result, ToolResponse):
-        return json.dumps(
-            {
-                "status": result.status,
-                "data": result.data,
-                "message": result.message,
-                "error_code": result.error_code,
-                "retryable": result.retryable,
-                "meta": result.meta,
-            },
-            ensure_ascii=False,
-        )
+        payload = {
+            "status": result.status,
+            "data": result.data,
+            "message": result.message,
+            "error_code": result.error_code,
+            "retryable": result.retryable,
+            "meta": result.meta,
+        }
+        return _dump_payload(payload, limit=limit, tool_name=tool_name)
     if is_dataclass(result) and not isinstance(result, type):
         payload = getattr(result, "__dict__", str(result))
-        return json.dumps(payload, ensure_ascii=False)
+        return _dump_payload(payload, limit=limit, tool_name=tool_name)
     if isinstance(result, dict):
-        return json.dumps(result, ensure_ascii=False)
-    return str(result)
+        return _dump_payload(result, limit=limit, tool_name=tool_name)
+    text = str(result)
+    if limit is None:
+        return text
+    return _clip_text(text, limit)
+
+
+def _dump_payload(payload: Any, *, limit: int | None, tool_name: str) -> str:
+    text = json.dumps(payload, ensure_ascii=False)
+    if limit is None or len(text) <= limit:
+        return text
+    if isinstance(payload, dict):
+        structured = _shrink_structured_payload(
+            payload, limit=limit, tool_name=tool_name
+        )
+        structured_text = json.dumps(structured, ensure_ascii=False)
+        if len(structured_text) <= limit:
+            return structured_text
+        preview = _build_preview_payload(structured, limit)
+        preview_text = json.dumps(preview, ensure_ascii=False)
+        if len(preview_text) <= limit:
+            return preview_text
+        fallback = _build_minimal_fallback_payload(payload, text, limit)
+        fallback_text = json.dumps(fallback, ensure_ascii=False)
+        if len(fallback_text) <= limit:
+            return fallback_text
+        return json.dumps(
+            _build_minimal_fallback_payload(payload, text, max(32, limit - 20)),
+            ensure_ascii=False,
+        )
+    fallback = {
+        "status": "ok",
+        "data": {"preview": _clip_text(text, max(16, (limit or 120) - 40))},
+    }
+    fallback_text = json.dumps(fallback, ensure_ascii=False)
+    if limit is None or len(fallback_text) <= limit:
+        return fallback_text
+    fallback["data"]["preview"] = _clip_text(
+        text,
+        max(
+            8,
+            (
+                limit
+                - len(
+                    json.dumps(
+                        {"status": "ok", "data": {"preview": ""}}, ensure_ascii=False
+                    )
+                )
+            )
+            - 2,
+        ),
+    )
+    return json.dumps(fallback, ensure_ascii=False)
+
+
+def _shrink_structured_payload(
+    payload: dict[str, Any],
+    *,
+    limit: int,
+    tool_name: str,
+) -> dict[str, Any]:
+    if tool_name in {"load_context", "track_reply"}:
+        return _shrink_multi_message_payload(payload, limit=limit)
+    if tool_name == "load_message":
+        return _shrink_single_message_payload(payload, limit=limit)
+    return payload
+
+
+def _shrink_multi_message_payload(
+    payload: dict[str, Any], *, limit: int
+) -> dict[str, Any]:
+    data = payload.get("data", {}) or {}
+    messages = data.get("messages", []) or []
+    if not isinstance(messages, list):
+        return payload
+
+    message_count = len(messages)
+    for count in range(message_count, 0, -1):
+        for raw_limit in (120, 80, 48, 24):
+            clipped_messages = [
+                _compact_message_payload(item, raw_limit=raw_limit, minimal=False)
+                for item in messages[:count]
+                if isinstance(item, dict)
+            ]
+            candidate = dict(payload)
+            candidate_data = dict(data)
+            candidate_data["messages"] = clipped_messages
+            omitted = max(0, message_count - count)
+            if omitted:
+                candidate_data["omitted_message_count"] = omitted
+            candidate["data"] = candidate_data
+            if len(json.dumps(candidate, ensure_ascii=False)) <= limit:
+                return candidate
+        for raw_limit in (48, 24, 12):
+            clipped_messages = [
+                _compact_message_payload(item, raw_limit=raw_limit, minimal=True)
+                for item in messages[:count]
+                if isinstance(item, dict)
+            ]
+            candidate = dict(payload)
+            candidate_data = dict(data)
+            candidate_data["messages"] = clipped_messages
+            omitted = max(0, message_count - count)
+            if omitted:
+                candidate_data["omitted_message_count"] = omitted
+            candidate["data"] = candidate_data
+            if len(json.dumps(candidate, ensure_ascii=False)) <= limit:
+                return candidate
+    return payload
+
+
+def _shrink_single_message_payload(
+    payload: dict[str, Any], *, limit: int
+) -> dict[str, Any]:
+    data = payload.get("data", {}) or {}
+    message = data.get("message", {}) or {}
+    if not isinstance(message, dict):
+        return payload
+    for raw_limit in (160, 100, 60, 32):
+        candidate = dict(payload)
+        candidate_data = dict(data)
+        candidate_data["message"] = _compact_message_payload(
+            message, raw_limit=raw_limit, minimal=False
+        )
+        candidate["data"] = candidate_data
+        if len(json.dumps(candidate, ensure_ascii=False)) <= limit:
+            return candidate
+    for raw_limit in (48, 24, 12):
+        candidate = dict(payload)
+        candidate_data = dict(data)
+        candidate_data["message"] = _compact_message_payload(
+            message, raw_limit=raw_limit, minimal=True
+        )
+        candidate["data"] = candidate_data
+        if len(json.dumps(candidate, ensure_ascii=False)) <= limit:
+            return candidate
+    return payload
+
+
+def _pick_sender_label(message: dict[str, Any]) -> tuple[str, str] | None:
+    sender_nickname = message.get("sender_nickname", "")
+    sender_card = message.get("sender_card", "")
+    nickname = message.get("nickname", "")
+    user_id = message.get("user_id", "")
+    if sender_nickname:
+        return ("sender_nickname", sender_nickname)
+    if sender_card:
+        return ("sender_card", sender_card)
+    if nickname:
+        return ("nickname", nickname)
+    if user_id:
+        return ("user_id", user_id)
+    return None
+
+
+def _compact_message_payload(
+    message: dict[str, Any],
+    *,
+    raw_limit: int,
+    minimal: bool,
+) -> dict[str, Any]:
+    compact: dict[str, Any] = {
+        "message_id": message.get("message_id", ""),
+        "timestamp": message.get("timestamp", ""),
+        "raw_message": _clip_text(str(message.get("raw_message", "") or ""), raw_limit),
+    }
+    label = _pick_sender_label(message)
+    if label:
+        compact[label[0]] = label[1]
+
+    has_image = bool(message.get("has_image", False))
+    has_forward = bool(message.get("has_forward", False))
+    if has_image:
+        compact["has_image"] = True
+    if has_forward:
+        compact["has_forward"] = True
+
+    if not minimal:
+        user_id = message.get("user_id", "")
+        sender_card = message.get("sender_card", "")
+        nickname = message.get("nickname", "")
+        if user_id and "user_id" not in compact:
+            compact["user_id"] = user_id
+        if sender_card and "sender_card" not in compact:
+            compact["sender_card"] = sender_card
+        if nickname and "nickname" not in compact:
+            compact["nickname"] = nickname
+    return compact
+
+
+def _build_preview_payload(payload: dict[str, Any], limit: int) -> dict[str, Any]:
+    preview_source = json.dumps(payload.get("data", {}), ensure_ascii=False)
+    allowed = max(16, limit - 120)
+    return {
+        "status": payload.get("status", "ok"),
+        "data": {"preview": _clip_text(preview_source, allowed)},
+        "message": payload.get("message", ""),
+        "error_code": payload.get("error_code"),
+        "retryable": payload.get("retryable", False),
+        "meta": payload.get("meta", {}),
+    }
+
+
+def _build_minimal_fallback_payload(
+    payload: dict[str, Any],
+    text: str,
+    limit: int,
+) -> dict[str, Any]:
+    base = {
+        "status": payload.get("status", "ok"),
+        "data": {"preview": ""},
+        "message": payload.get("message", ""),
+        "error_code": payload.get("error_code"),
+        "retryable": payload.get("retryable", False),
+    }
+    overhead = len(json.dumps(base, ensure_ascii=False))
+    allowed = max(8, limit - overhead - 2)
+    base["data"]["preview"] = _clip_text(text, allowed)
+    return base
 
 
 def _clip_text(text: str, limit: int) -> str:

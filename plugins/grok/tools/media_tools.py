@@ -14,9 +14,9 @@ from ..shared import load_schema
 from ..vision.analyzer import analyze_image
 from ..vision.cache import VisionCacheStore
 from ..vision.image_prep import prepare_for_api
-from ..vision.schemas import analysis_to_dict
+from ..vision.schemas import analysis_to_dict, render_visual_context
 from ..vision.video_analyzer import analyze_video
-from ..vision.video_schemas import video_analysis_to_dict
+from ..vision.video_schemas import render_video_context, video_analysis_to_dict
 from .registry import ToolDefinition, ToolResponse
 
 
@@ -118,6 +118,7 @@ def _read_picture_handler(plugin):
                 analysis,
             )
         payload = analysis_to_dict(analysis)
+        semantic_text = render_visual_context(analysis)
         await _persist_analysis(
             plugin,
             file_unique=file_unique,
@@ -125,6 +126,7 @@ def _read_picture_handler(plugin):
             payload=payload,
             media_type="image",
             image_id=getattr(image, "id", None),
+            semantic_text=semantic_text,
             message_db_id=getattr(message, "id", None),
         )
         # Attach the message text alongside image analysis
@@ -209,6 +211,7 @@ def _read_video_handler(plugin):
                 analysis,
             )
         payload = video_analysis_to_dict(analysis)
+        semantic_text = render_video_context(analysis)
         await _persist_analysis(
             plugin,
             file_unique=file_unique,
@@ -216,6 +219,8 @@ def _read_video_handler(plugin):
             payload=payload,
             media_type="video",
             image_id=None,
+            semantic_text=semantic_text,
+            video_id=video.get("id"),
             message_db_id=getattr(message, "id", None),
         )
         return ToolResponse(
@@ -263,45 +268,69 @@ async def _read_image_bytes(image) -> bytes | None:
             return await response.read()
 
 
+def _extract_video_from_stored(video) -> dict[str, Any]:
+    return {
+        "id": getattr(video, "id", None),
+        "url": _clean_string(getattr(video, "file_url", None)),
+        "local_path": _clean_string(getattr(video, "local_path", None)),
+        "title": _clean_string(getattr(video, "title", None)) or "",
+        "intro": _clean_string(getattr(video, "intro", None)) or "",
+    }
+
+
+def _extract_video_from_event_segment(segment) -> dict[str, Any] | None:
+    if hasattr(segment, "to_dict"):
+        segment = segment.to_dict()
+    if not isinstance(segment, dict) or str(segment.get("type", "")) != "video":
+        return None
+    data = segment.get("data", {}) or {}
+    return {
+        "id": None,
+        "url": _clean_string(data.get("url")),
+        "local_path": _clean_string(data.get("file"))
+        or _clean_string(data.get("path")),
+        "title": _clean_string(data.get("title")) or "",
+        "intro": _clean_string(data.get("desc")) or "",
+    }
+
+
+def _extract_video_from_source_segment(segment) -> dict[str, Any] | None:
+    if getattr(segment, "segment_type", "") != "video":
+        return None
+    try:
+        data = json.loads(str(getattr(segment, "segment_data", "") or "{}"))
+    except json.JSONDecodeError:
+        data = {}
+    return {
+        "id": None,
+        "url": _clean_string(data.get("url")),
+        "local_path": _clean_string(data.get("file"))
+        or _clean_string(data.get("path")),
+        "title": _clean_string(data.get("title")) or "",
+        "intro": _clean_string(data.get("desc")) or "",
+    }
+
+
 def _extract_video_sources(event, source_msg) -> list[dict[str, Any]]:
-    segments = getattr(event, "message", None) or []
+    """Collect video sources in priority order."""
+    stored_videos = getattr(source_msg, "videos", []) or []
+    if stored_videos:
+        result = [_extract_video_from_stored(v) for v in stored_videos]
+        if result:
+            return result
+
     result: list[dict[str, Any]] = []
-    if segments:
-        for segment in segments:
-            if hasattr(segment, "to_dict"):
-                segment = segment.to_dict()
-            if not isinstance(segment, dict) or str(segment.get("type", "")) != "video":
-                continue
-            data = segment.get("data", {}) or {}
-            result.append(
-                {
-                    "url": _clean_string(data.get("url")),
-                    "local_path": _clean_string(data.get("file"))
-                    or _clean_string(data.get("path")),
-                    "title": _clean_string(data.get("title")) or "",
-                    "intro": _clean_string(data.get("desc")) or "",
-                }
-            )
+    for segment in getattr(event, "message", None) or []:
+        extracted = _extract_video_from_event_segment(segment)
+        if extracted is not None:
+            result.append(extracted)
     if result:
         return result
 
-    source_segments = getattr(source_msg, "segments", []) or []
-    for segment in source_segments:
-        if getattr(segment, "segment_type", "") != "video":
-            continue
-        try:
-            data = json.loads(str(getattr(segment, "segment_data", "") or "{}"))
-        except json.JSONDecodeError:
-            data = {}
-        result.append(
-            {
-                "url": _clean_string(data.get("url")),
-                "local_path": _clean_string(data.get("file"))
-                or _clean_string(data.get("path")),
-                "title": _clean_string(data.get("title")) or "",
-                "intro": _clean_string(data.get("desc")) or "",
-            }
-        )
+    for segment in getattr(source_msg, "segments", []) or []:
+        extracted = _extract_video_from_source_segment(segment)
+        if extracted is not None:
+            result.append(extracted)
     return result
 
 
@@ -340,7 +369,16 @@ def _cache_version(plugin) -> str:
 
 
 async def _persist_analysis(
-    plugin, *, file_unique, analysis, payload, media_type, image_id, message_db_id
+    plugin,
+    *,
+    file_unique,
+    analysis,
+    payload,
+    media_type,
+    image_id,
+    video_id=None,
+    semantic_text,
+    message_db_id,
 ):
     """Write analysis result to recorder's permanent image_analyses table."""
     vision = plugin.settings.vision
@@ -355,9 +393,11 @@ async def _persist_analysis(
         analysis_json=json.dumps(payload, ensure_ascii=False),
         media_type=media_type,
         image_type=payload.get("image_type", "") or payload.get("media_type", ""),
+        semantic_text=semantic_text,
         confidence=analysis.confidence,
         prompt_version=vision.prompt_version,
         schema_version=vision.schema_version,
         image_id=image_id,
+        video_id=video_id,
         message_db_id=message_db_id,
     )

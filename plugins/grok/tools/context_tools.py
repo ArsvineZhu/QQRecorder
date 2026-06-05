@@ -30,6 +30,12 @@ def build_context_tools(plugin) -> list[ToolDefinition]:
             handler=_load_context_handler(plugin),
         ),
         ToolDefinition(
+            name="load_message",
+            description="Load one recorded message by its message_id.",
+            schema=load_schema("tools/load_message.json"),
+            handler=_load_message_handler(plugin),
+        ),
+        ToolDefinition(
             name="extract_forward",
             description="Extract flattened forward content from a recorded message.",
             schema=load_schema("tools/extract_forward.json"),
@@ -52,7 +58,7 @@ def _track_reply_handler(plugin):
                 error_code="message_not_found",
                 message="source message not available",
             )
-        max_depth = int(arguments.get("max_depth", 6) or 6)
+        max_depth = int(arguments.get("max_depth", 6) or 3)
         chain = await bridge.get_reply_chain(source_msg, max_depth=max_depth)
         data = {
             "messages": [_message_payload(item) for item in chain],
@@ -150,6 +156,24 @@ def _extract_forward_handler(plugin):
     return _handler
 
 
+def _load_message_handler(plugin):
+    async def _handler(
+        context: dict[str, Any],
+        arguments: dict[str, Any],
+    ) -> ToolResponse:
+        message = await _resolve_message(plugin, context, arguments)
+        if message is None:
+            return ToolResponse(
+                status="failed",
+                data={},
+                error_code="message_not_found",
+                message="message not available",
+            )
+        return ToolResponse(status="ok", data={"message": _message_payload(message)})
+
+    return _handler
+
+
 def _extract_forward_id(raw_message: str) -> str:
     import re
 
@@ -173,6 +197,8 @@ def _message_payload(message) -> dict[str, Any]:
     return {
         "message_id": str(getattr(message, "message_id", "") or ""),
         "user_id": str(getattr(message, "user_id", "") or ""),
+        "sender_nickname": str(getattr(message, "sender_nickname", "") or ""),
+        "sender_card": str(getattr(message, "sender_card", "") or ""),
         "chat_type": str(getattr(message, "chat_type", "") or ""),
         "group_id": str(getattr(message, "group_id", "") or ""),
         "timestamp": str(getattr(message, "timestamp", "") or ""),

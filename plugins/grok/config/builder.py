@@ -58,9 +58,13 @@ def build_config(raw: dict) -> AgentPluginSettings:
             max_evidence_chars=agent_data.get("max_evidence_chars", 6000),
         ),
         prompt=PromptConfig(
+            assistant_name=str(prompt_data.get("assistant_name", "Grok") or ""),
             system_template_path=str(
                 prompt_data.get("system_template_path", "prompt/system.md") or ""
-            )
+            ),
+            context_message_preview_chars=prompt_data.get(
+                "context_message_preview_chars", 280
+            ),
         ),
         profile=ProfileConfig(
             db_path=str(profile_data.get("db_path", "data/profiles.json") or ""),

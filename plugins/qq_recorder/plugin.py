@@ -1,4 +1,6 @@
 import os
+import re
+from pathlib import Path
 
 from ncatbot.core import registrar
 from ncatbot.event.qq import GroupMessageEvent, PrivateMessageEvent
@@ -8,6 +10,7 @@ from .backup import BackupManager
 from .commands import CommandHandler
 from .config import build_config
 from .events import event_to_dict
+from .outbound_recorder import install_outbound_recording
 from .processors import MessageProcessor
 from .storage import MessageStorage
 
@@ -40,6 +43,12 @@ class QQRecorderPlugin(NcatBotPlugin):
         os.makedirs(images_dir, exist_ok=True)
         settings.storage.images_dir = images_dir
 
+        videos_dir = settings.storage.videos_dir
+        if not os.path.isabs(videos_dir):
+            videos_dir = str(self.workspace / videos_dir)
+        os.makedirs(videos_dir, exist_ok=True)
+        settings.storage.videos_dir = videos_dir
+
         backup_dir = settings.backup.output_dir
         if not os.path.isabs(backup_dir):
             backup_dir = str(self.workspace / backup_dir)
@@ -56,6 +65,12 @@ class QQRecorderPlugin(NcatBotPlugin):
         self._command_handler = CommandHandler(self.storage, self.logger)
         self._processor = MessageProcessor(
             self.storage, settings, self.api, self.logger
+        )
+        install_outbound_recording(
+            self.api,
+            self.storage,
+            bot_uin=_resolve_bot_uin(),
+            logger=self.logger,
         )
         self._backup_manager = BackupManager(
             settings.backup,
@@ -111,3 +126,12 @@ class QQRecorderPlugin(NcatBotPlugin):
     async def on_private_message(self, event: PrivateMessageEvent):
         event_dict = event_to_dict(event)
         await self._processor.process_message(event_dict)
+
+
+def _resolve_bot_uin() -> str:
+    config_path = Path("config.yaml")
+    if not config_path.is_file():
+        return ""
+    text = config_path.read_text(encoding="utf-8", errors="ignore")
+    match = re.search(r"^bot_uin:\s*['\"]?(\d+)['\"]?\s*$", text, re.MULTILINE)
+    return match.group(1) if match else ""

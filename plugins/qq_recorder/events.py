@@ -55,6 +55,31 @@ def is_command(raw_message: str, prefixes: tuple[str, ...]) -> bool:
     return first_token in prefixes
 
 
+def _build_extras_tags(parsed, max_depth: int) -> str:
+    extras: list[str] = []
+    if parsed.images:
+        sticker_count = sum(1 for img in parsed.images if img.is_sticker)
+        if sticker_count == len(parsed.images):
+            extras.append(f"{sticker_count}sticker")
+        elif sticker_count > 0:
+            extras.append(f"{len(parsed.images)}img(sticker×{sticker_count})")
+        else:
+            extras.append(f"{len(parsed.images)}img")
+    if parsed.videos:
+        extras.append(f"{len(parsed.videos)}video")
+    if parsed.replies:
+        extras.append("reply")
+    if parsed.forward_ids:
+        extras.append(f"fwd(depth={max_depth})")
+    if parsed.at_mentions:
+        extras.append(f"@{len(parsed.at_mentions)}")
+    if parsed.app_shares:
+        names = {s.app_name for s in parsed.app_shares if s.app_name}
+        label = ",".join(sorted(names)) if names else "json"
+        extras.append(f"share({label})")
+    return f" [{','.join(extras)}]" if extras else ""
+
+
 def format_stored_log(event: dict, parsed, max_depth: int, message_db_id: int) -> str:
     """Format a log line for a stored message."""
     chat_type = event.get("message_type")
@@ -67,28 +92,10 @@ def format_stored_log(event: dict, parsed, max_depth: int, message_db_id: int) -
     if len(raw) > 50:
         raw = raw[:47] + "..."
 
-    parts = [f"[{chat_type}:{chat_id}] <{display_name}> {raw}"]
-    extras = []
-    if parsed.images:
-        sticker_count = sum(1 for img in parsed.images if img.is_sticker)
-        if sticker_count == len(parsed.images):
-            extras.append(f"{sticker_count}sticker")
-        elif sticker_count > 0:
-            extras.append(f"{len(parsed.images)}img(sticker×{sticker_count})")
-        else:
-            extras.append(f"{len(parsed.images)}img")
-    if parsed.replies:
-        extras.append("reply")
-    if parsed.forward_ids:
-        extras.append(f"fwd(depth={max_depth})")
-    if parsed.at_mentions:
-        extras.append(f"@{len(parsed.at_mentions)}")
-    if parsed.app_shares:
-        names = {s.app_name for s in parsed.app_shares if s.app_name}
-        label = ",".join(sorted(names)) if names else "json"
-        extras.append(f"share({label})")
-    if extras:
-        parts.append(f" [{','.join(extras)}]")
-    parts.append(f" -> id#{message_db_id}")
-
-    return "".join(parts)
+    return "".join(
+        [
+            f"[{chat_type}:{chat_id}] <{display_name}> {raw}",
+            _build_extras_tags(parsed, max_depth),
+            f" -> id#{message_db_id}",
+        ]
+    )

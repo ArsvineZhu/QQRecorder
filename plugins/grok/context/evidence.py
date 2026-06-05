@@ -32,6 +32,8 @@ class AgentWorkingContext:
     context: ContextBundle
     evidence: list[EvidenceBlock] = field(default_factory=list)
     step_budget: int = 4
+    tool_call_budget_total: int = 0
+    tool_call_budget_remaining: int = 0
 
 
 @dataclass

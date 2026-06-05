@@ -2,7 +2,9 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+from plugins.grok.agent.prompt import build_model_messages
 from plugins.grok.app.runtime import AgentRuntime
+from plugins.grok.config import build_config
 from plugins.grok.context.evidence import AgentToolCall
 from plugins.grok.tools.registry import ToolResponse
 
@@ -14,6 +16,33 @@ class _LargePayloadRegistry:
     async def execute(self, name, arguments, context):
         del name, arguments, context
         return ToolResponse(status="ok", data={"payload": "x" * 500})
+
+
+class _LargeContextRegistry:
+    def list_for_model(self):
+        return []
+
+    async def execute(self, name, arguments, context):
+        del arguments, context
+        if name != "load_context":
+            return ToolResponse(status="ok", data={})
+        messages = []
+        for index in range(8):
+            messages.append(
+                {
+                    "message_id": f"m-{index}",
+                    "user_id": "20001",
+                    "sender_nickname": "Zodiac",
+                    "sender_card": "",
+                    "chat_type": "group",
+                    "group_id": "30001",
+                    "timestamp": f"2026-06-05 11:2{index}:00",
+                    "raw_message": "这是一条很长的上下文消息 " + ("x" * 120),
+                    "has_image": False,
+                    "has_forward": False,
+                }
+            )
+        return ToolResponse(status="ok", data={"messages": messages})
 
 
 class _SingleToolAdapter:
@@ -89,6 +118,63 @@ def test_runtime_clips_large_evidence_payload_to_budget():
     asyncio.run(_run())
 
 
+def test_runtime_keeps_load_context_payload_as_valid_json_for_prompt_rendering():
+    async def _run():
+        plugin = SimpleNamespace(
+            settings=SimpleNamespace(
+                agent=SimpleNamespace(
+                    max_steps=3,
+                    max_tool_calls_per_turn=1,
+                    max_evidence_chars=260,
+                )
+            ),
+            api=SimpleNamespace(ai=object()),
+        )
+        runtime = AgentRuntime(
+            plugin,
+            registry=_LargeContextRegistry(),
+            model_runner=_SingleToolAdapter().run,
+        )
+        source_msg = SimpleNamespace(
+            chat_type="group",
+            group_id="30001",
+            user_id="20001",
+            sender_nickname="Zodiac",
+            message_id="evt-1",
+            raw_message="/agent hi",
+        )
+        event = SimpleNamespace(
+            group_id="30001",
+            user_id="20001",
+            self_id="10000",
+            message_id="evt-1",
+            raw_message="/agent hi",
+        )
+
+        outcome = await runtime.run(
+            event=event,
+            source_msg=source_msg,
+            trigger_reason="prefix:/agent",
+        )
+
+        tool_result = next(
+            block
+            for block in outcome.working_context.evidence
+            if block.kind == "tool_result" and block.label == "load_context"
+        )
+        payload = json.loads(tool_result.content)
+        assert payload["status"] == "ok"
+        assert payload["data"]["messages"]
+
+        settings = build_config({"enabled": True, "recorder_db": "C:/tmp/recorder.db"})
+        messages = build_model_messages(outcome.working_context, settings)
+        assert "## 相关上下文" in messages[1]["content"]
+        assert '{"status": "ok"' not in messages[1]["content"]
+        assert "- `Zodiac`" in messages[1]["content"]
+
+    asyncio.run(_run())
+
+
 class _AlwaysToolAdapter:
     def __init__(self, tool_name="load_context", arguments=None):
         self.calls = 0
@@ -146,6 +232,8 @@ def test_runtime_stops_at_global_tool_call_budget():
             trigger_reason="prefix:/agent",
         )
 
+        assert outcome.working_context.tool_call_budget_total == 2
+        assert outcome.working_context.tool_call_budget_remaining == 0
         assert outcome.error_code == "tool_budget_exceeded"
         assert len([step for step in outcome.steps if step.status == "ok"]) == 2
         assert outcome.steps[-1].status == "skipped"
@@ -157,7 +245,7 @@ def test_runtime_stops_at_global_tool_call_budget():
     asyncio.run(_run())
 
 
-def test_runtime_stops_duplicate_track_reply_loop():
+def test_runtime_skips_duplicate_track_reply_and_continues():
     async def _run():
         plugin = SimpleNamespace(
             settings=SimpleNamespace(
@@ -196,7 +284,9 @@ def test_runtime_stops_duplicate_track_reply_loop():
             trigger_reason="reply",
         )
 
-        assert outcome.error_code == "duplicate_track_reply"
+        assert outcome.working_context.tool_call_budget_total == 6
+
+        assert outcome.error_code == "max_steps_exceeded"
         assert len([step for step in outcome.steps if step.status == "ok"]) == 1
         assert outcome.steps[-1].status == "skipped"
         assert outcome.steps[-1].tool_name == "track_reply"

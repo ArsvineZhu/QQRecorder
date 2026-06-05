@@ -92,7 +92,7 @@ def test_run_agent_turn_parses_tool_calls():
     assert "回复要短、快、有判断" not in messages[0]["content"]
     assert "# 本轮回复任务" in messages[1]["content"]
     assert "## 要回答的用户消息" in messages[1]["content"]
-    assert "## 回复要求" in messages[1]["content"]
+    assert "## 回复要求" not in messages[1]["content"]
     assert "看看这个" in messages[1]["content"]
 
 

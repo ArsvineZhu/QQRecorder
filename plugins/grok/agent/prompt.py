@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,10 @@ def render_system_prompt(settings, *, values: dict[str, str]) -> str:
     template_path = _resolve_template_path(settings.prompt.system_template_path)
     template = template_path.read_text(encoding="utf-8")
     rendered = template
-    replacements = {"runtime_identity_block": _build_runtime_identity_block(None)}
+    replacements = {
+        "runtime_identity_block": _build_runtime_identity_block(None),
+        "assistant_name": _assistant_name(settings),
+    }
     replacements.update(values)
     for key, value in replacements.items():
         rendered = rendered.replace(f"{{{{{key}}}}}", value)
@@ -36,7 +40,7 @@ def build_model_messages(working_context, settings) -> list[dict[str, str]]:
             ),
         },
     )
-    user = _build_user_content(working_context)
+    user = _build_user_content(working_context, settings)
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -102,9 +106,16 @@ def _sanitize_text(text: str) -> str:
     return result.strip()
 
 
-def _build_user_content(working_context) -> str:
+def _build_user_content(working_context, settings) -> str:
     context = working_context.context
     sender = context.current_sender or context.user_id
+    render_state = _build_render_state(working_context, settings)
+    current_message = _semanticize_message_text(
+        context.current_message,
+        bot_id=str(context.bot_id or ""),
+        id_to_name=render_state["id_to_name"],
+        assistant_name=str(render_state["assistant_name"]),
+    )
     parts = [
         "# 本轮回复任务",
         "",
@@ -115,52 +126,49 @@ def _build_user_content(working_context) -> str:
         f"- 触发原因：`{_sanitize_text(context.trigger_reason)}`",
         "- 消息内容：",
         "",
-        f"> {_sanitize_text(context.current_message)}",
+        f"> {_sanitize_text(current_message)}",
         "",
         "## 会话元信息",
         "",
         f"- 会话类型：`{_sanitize_text(context.chat_type)}`",
         f"- 会话 ID：`{_sanitize_text(context.chat_id)}`",
-        f"- 机器人 self_id：`{_sanitize_text(context.bot_id or 'unknown')}`",
+        f"- 自身 ID：`{_sanitize_text(context.bot_id or 'unknown')}`",
         f"- 当前时间：`{_sanitize_text(context.current_time or 'unknown')}`",
     ]
+    roster = _render_group_roster(render_state["roster"])
+    if roster:
+        parts.extend(["", "## 群聊档案", "", roster])
 
-    quoted = _render_evidence(working_context, {"track_reply"})
+    quoted = _render_evidence(
+        working_context, {"track_reply"}, render_state=render_state
+    )
     if quoted:
-        parts.extend(["", "## 引用消息", "", quoted])
+        _append_section(parts, "## 引用消息", quoted)
 
     recent = _render_evidence(
         working_context,
-        {"load_context", "extract_forward", "load_profile"},
+        {"load_context", "load_message", "extract_forward", "load_profile"},
         include_errors=True,
+        render_state=render_state,
     )
     if recent:
-        parts.extend(["", "## 相关上下文", "", recent])
+        _append_section(parts, "## 相关上下文", recent)
 
-    visual = _render_evidence(working_context, {"read_picture", "read_video"})
+    visual = _render_evidence(
+        working_context, {"read_picture", "read_video"}, render_state=render_state
+    )
     if visual:
-        parts.extend(["", "## 视觉分析", "", visual])
-
-    reply_instruction = str(getattr(context, "group_instruction", "") or "")
-    if not reply_instruction or reply_instruction == "group":
-        reply_instruction = (
-            (
-                "回复要短、快、有判断，适合插入群聊。不要长篇解释；"
-                "除非用户明确要求详细分析，否则控制在 1 到 4 句话。"
-            )
-            if context.chat_type == "group"
-            else (
-                "回复更完整，但仍然保持直接、有判断、机智。"
-                "能给结论就先给结论，必要时再解释。"
-            )
-        )
+        _append_section(parts, "## 视觉分析", visual)
     parts.extend(
         [
             "",
-            "## 回复要求",
+            "---",
             "",
-            f"- {_sanitize_text(reply_instruction)}",
-            "- 请生成一条可以直接发送到 IM 平台的回复",
+            "工具数据",
+            f"- 本轮工具总额度："
+            f"`{int(getattr(working_context, 'tool_call_budget_total', 0) or 0)}`",
+            f"- 当前剩余额度："
+            f"`{int(getattr(working_context, 'tool_call_budget_remaining', 0) or 0)}`",
         ]
     )
     return "\n".join(parts)
@@ -174,6 +182,7 @@ def _render_evidence(
     labels: set[str],
     *,
     include_errors: bool = False,
+    render_state: dict[str, Any] | None = None,
 ) -> str:
     """Render tool results as semantic text blocks, not raw JSON."""
     rendered: list[str] = []
@@ -181,13 +190,25 @@ def _render_evidence(
         if block.label not in labels:
             if not (include_errors and block.kind == "tool_error"):
                 continue
-        text = _render_block(block)
+        text = _render_block(block, render_state=render_state)
         if text:
             rendered.append(text)
     return "\n".join(rendered)
 
 
-def _render_block(block) -> str:
+def _append_section(parts: list[str], title: str, body: str) -> None:
+    parts.extend(["", title])
+    if not _starts_with_subheading(body):
+        parts.append("")
+    parts.append(body)
+
+
+def _starts_with_subheading(body: str) -> bool:
+    stripped = str(body or "").lstrip()
+    return stripped.startswith("### ")
+
+
+def _render_block(block, *, render_state: dict[str, Any] | None = None) -> str:
     label = block.label or ""
     content = str(block.content or "")
 
@@ -208,7 +229,7 @@ def _render_block(block) -> str:
         return failed
     renderer = _RENDERERS.get(label)
     if renderer:
-        return renderer(payload)
+        return renderer(payload, render_state or {})
     return f"```json\n{_sanitize_text(content[:2000])}\n```"
 
 
@@ -239,7 +260,7 @@ def _renderer(name: str):
 
 
 @_renderer("track_reply")
-def _render_track_reply(data: dict) -> str:
+def _render_track_reply(data: dict, render_state: dict[str, Any]) -> str:
     status = str(data.get("status", "") or "")
     error_code = str(data.get("error_code", "") or "")
     message = str(data.get("message", "") or "")
@@ -251,10 +272,17 @@ def _render_track_reply(data: dict) -> str:
         return "- **引用链为空**：这条链已经查完，不要重复调用 `track_reply`。"
     lines: list[str] = []
     for msg in messages:
-        ts = str(msg.get("timestamp", "") or "unknown")
-        uid = str(msg.get("user_id", "") or "unknown")
-        raw = str(msg.get("raw_message", "") or "")
-        lines.append(f"- `{ts}` 用户 `{uid}`：{_sanitize_text(raw)}")
+        raw = _semanticize_message_text(
+            str(msg.get("raw_message", "") or ""),
+            bot_id=str(render_state.get("bot_id", "") or ""),
+            id_to_name=render_state.get("id_to_name", {}),
+            assistant_name=str(render_state.get("assistant_name", "Grok") or "Grok"),
+        )
+        time_part = _message_time_label(msg)
+        sender = _message_sender_label(msg)
+        lines.append(
+            f"- [{time_part}] `{_sanitize_text(sender)}`：{_sanitize_text(raw)}"
+        )
     root = str(data.get("data", {}).get("root_message_id") or "")
     if root:
         lines.append(f"- 根消息 ID：`{root}`")
@@ -262,7 +290,7 @@ def _render_track_reply(data: dict) -> str:
 
 
 @_renderer("load_context")
-def _render_load_context(data: dict) -> str:
+def _render_load_context(data: dict, render_state: dict[str, Any]) -> str:
     messages = data.get("data", {}).get("messages", []) or []
     if not messages:
         return "- **上下文为空**"
@@ -277,23 +305,33 @@ def _render_load_context(data: dict) -> str:
     for date_key in sorted(by_date.keys()):
         if len(by_date) > 1:
             lines.append(f"### {date_key}")
-        for msg in by_date[date_key]:
-            ts = str(msg.get("timestamp", "") or "")
-            time_part = ts[11:19] if len(ts) >= 19 else ts or "unknown"
-            uid = str(msg.get("user_id", "") or "unknown")
-            raw = str(msg.get("raw_message", "") or "")
-            tags = []
-            if bool(msg.get("has_image", False)):
-                tags.append("图片")
-            if bool(msg.get("has_forward", False)):
-                tags.append("转发")
-            suffix = f"（{', '.join(tags)}）" if tags else ""
-            lines.append(f"- `{time_part}` 用户 `{uid}`：{_sanitize_text(raw)}{suffix}")
+        lines.extend(_render_grouped_context_messages(by_date[date_key], render_state))
     return "\n".join(lines)
 
 
+@_renderer("load_message")
+def _render_load_message(data: dict, render_state: dict[str, Any]) -> str:
+    message = data.get("data", {}).get("message", {}) or {}
+    if not isinstance(message, dict) or not message:
+        return "- **指定消息为空**"
+    rendered = _render_context_message_line(
+        message,
+        render_state=render_state,
+        truncate=False,
+        include_sender=True,
+    )
+    message_id = str(message.get("message_id", "") or "unknown")
+    return "\n".join(
+        [
+            "### 指定消息",
+            f"- msg-id：`{_sanitize_text(message_id)}`",
+            rendered,
+        ]
+    )
+
+
 @_renderer("extract_forward")
-def _render_extract_forward(data: dict) -> str:
+def _render_extract_forward(data: dict, _render_state: dict[str, Any]) -> str:
     items = data.get("data", {}).get("forward_messages", []) or []
     if not items:
         return "- **合并转发为空**"
@@ -308,7 +346,7 @@ def _render_extract_forward(data: dict) -> str:
 
 
 @_renderer("load_profile")
-def _render_load_profile(data: dict) -> str:
+def _render_load_profile(data: dict, _render_state: dict[str, Any]) -> str:
     profile = data.get("data", {}) or {}
     if not profile:
         return "- **用户档案**：无用户档案，只有空白 ID"
@@ -334,7 +372,7 @@ def _render_load_profile(data: dict) -> str:
 
 
 @_renderer("read_picture")
-def _render_read_picture(data: dict) -> str:  # noqa: C901
+def _render_read_picture(data: dict, _render_state: dict[str, Any]) -> str:  # noqa: C901
     content = data.get("data", {}) or {}
     lines: list[str] = ["### 图片分析"]
     if content.get("image_type"):
@@ -392,7 +430,7 @@ def _render_read_picture(data: dict) -> str:  # noqa: C901
 
 
 @_renderer("read_video")
-def _render_read_video(data: dict) -> str:  # noqa: C901
+def _render_read_video(data: dict, _render_state: dict[str, Any]) -> str:  # noqa: C901
     content = data.get("data", {}) or {}
     lines: list[str] = ["### 视频分析"]
     if content.get("video_type"):
@@ -451,3 +489,280 @@ def _render_read_video(data: dict) -> str:  # noqa: C901
     if msg_text:
         lines.append(f"- **附带消息**：{_sanitize_text(str(msg_text)[:200])}")
     return "\n".join(lines)
+
+
+def _build_render_state(working_context, settings) -> dict[str, Any]:
+    context = working_context.context
+    id_to_name: dict[str, str] = {}
+    name_to_id: dict[str, str] = {}
+
+    _add_roster_entry(
+        id_to_name,
+        name_to_id,
+        str(context.user_id or ""),
+        str(context.current_sender or ""),
+    )
+
+    for block in working_context.evidence:
+        try:
+            payload = json.loads(str(block.content or ""))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        top = _top(payload).get("data", {}) or {}
+        messages = top.get("messages", []) or []
+        if isinstance(messages, list):
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                _collect_roster_entry_from_message(msg, id_to_name, name_to_id)
+        message = top.get("message", {}) or {}
+        if isinstance(message, dict):
+            _collect_roster_entry_from_message(message, id_to_name, name_to_id)
+
+    roster = sorted(name_to_id.items(), key=lambda item: item[1])
+    return {
+        "bot_id": str(context.bot_id or ""),
+        "assistant_name": _assistant_name(settings),
+        "id_to_name": id_to_name,
+        "roster": roster,
+        "context_message_preview_chars": int(
+            getattr(settings.prompt, "context_message_preview_chars", 280) or 280
+        ),
+    }
+
+
+def _add_roster_entry(
+    id_to_name: dict[str, str],
+    name_to_id: dict[str, str],
+    user_id: str,
+    display_name: str,
+) -> None:
+    clean_id = user_id.strip()
+    clean_name = display_name.strip()
+    if not clean_id or not clean_name:
+        return
+    id_to_name.setdefault(clean_id, clean_name)
+    name_to_id.setdefault(clean_name, clean_id)
+
+
+def _collect_roster_entry_from_message(
+    message: dict[str, Any],
+    id_to_name: dict[str, str],
+    name_to_id: dict[str, str],
+) -> None:
+    user_id = str(message.get("user_id", "") or "")
+    display_name = (
+        str(message.get("sender_card", "") or "").strip()
+        or str(message.get("sender_nickname", "") or "").strip()
+        or str(message.get("nickname", "") or "").strip()
+    )
+    _add_roster_entry(id_to_name, name_to_id, user_id, display_name)
+
+
+def _render_group_roster(roster: list[tuple[str, str]]) -> str:
+    if not roster:
+        return ""
+    return "\n".join(
+        f"- `{_sanitize_text(name)}` → `{_sanitize_text(user_id)}`"
+        for name, user_id in roster
+    )
+
+
+def _semanticize_message_text(
+    raw_message: str,
+    *,
+    bot_id: str,
+    id_to_name: dict[str, str],
+    assistant_name: str,
+) -> str:
+    text = str(raw_message or "")
+    if not text:
+        return ""
+
+    pieces: list[str] = []
+    cursor = 0
+    for match in re.finditer(r"\[CQ:([a-zA-Z0-9_]+)(?:,([^\]]*))?\]", text):
+        prefix = text[cursor : match.start()].strip()
+        if prefix:
+            pieces.append(prefix)
+        pieces.append(
+            _render_cq_segment(
+                match.group(1),
+                match.group(2) or "",
+                bot_id=bot_id,
+                id_to_name=id_to_name,
+                assistant_name=assistant_name,
+            )
+        )
+        cursor = match.end()
+
+    suffix = text[cursor:].strip()
+    if suffix:
+        pieces.append(suffix)
+    return " ".join(piece for piece in pieces if piece).strip()
+
+
+def _render_cq_segment(
+    segment_type: str,
+    raw_args: str,
+    *,
+    bot_id: str,
+    id_to_name: dict[str, str],
+    assistant_name: str,
+) -> str:
+    args = _parse_cq_args(raw_args)
+
+    def _reply():
+        reply_id = str(args.get("id", "") or "").strip()
+        return f"[回复:{reply_id}]" if reply_id else "[回复]"
+
+    def _at():
+        target = str(args.get("qq", "") or args.get("target_user_id", "") or "").strip()
+        if not target:
+            return "@某人"
+        if target == bot_id:
+            return f"@{assistant_name}"
+        return f"@{id_to_name.get(target, target)}"
+
+    def _image():
+        details: list[str] = []
+        image_type = _infer_image_type(args)
+        if image_type:
+            details.append(f"类型:{image_type}")
+        file_size = str(args.get("file_size", "") or "").strip()
+        if file_size:
+            details.append(f"大小:{file_size}")
+        return f"[图片:{','.join(details)}]" if details else "[图片]"
+
+    def _face():
+        face_name = str(args.get("text", "") or args.get("name", "") or "").strip()
+        return f"[表情:{face_name}]" if face_name else "[表情]"
+
+    handlers = {
+        "reply": _reply,
+        "at": _at,
+        "image": _image,
+        "face": _face,
+        "forward": lambda: "[合并转发]",
+        "video": lambda: "[视频]",
+    }
+    handler = handlers.get(segment_type)
+    if handler:
+        return handler()
+    return f"[{segment_type}]"
+
+
+def _parse_cq_args(raw_args: str) -> dict[str, str]:
+    args: dict[str, str] = {}
+    for part in str(raw_args or "").split(","):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        args[key.strip()] = value.strip()
+    return args
+
+
+def _infer_image_type(args: dict[str, str]) -> str:
+    for key in ("file", "url"):
+        value = str(args.get(key, "") or "").strip()
+        match = re.search(r"\.([a-zA-Z0-9]+)(?:$|[?&,])", value)
+        if match:
+            return match.group(1).lower()
+    return ""
+
+
+def _message_time_label(message: dict[str, Any]) -> str:
+    ts = str(message.get("timestamp", "") or "")
+    return ts[11:19] if len(ts) >= 19 else ts or "unknown"
+
+
+def _message_sender_label(message: dict[str, Any]) -> str:
+    for key in ("sender_card", "sender_nickname", "nickname"):
+        value = str(message.get(key, "") or "").strip()
+        if value:
+            return value
+    return str(message.get("user_id", "") or "unknown").strip() or "unknown"
+
+
+def _assistant_name(settings) -> str:
+    return str(getattr(settings.prompt, "assistant_name", "Grok") or "Grok").strip()
+
+
+def _render_grouped_context_messages(
+    messages: list[dict[str, Any]],
+    render_state: dict[str, Any],
+) -> list[str]:
+    grouped_lines: list[str] = []
+    current_sender: str | None = None
+    current_lines: list[str] = []
+
+    for message in messages:
+        sender = _message_sender_label(message)
+        line = _render_context_message_line(
+            message,
+            render_state=render_state,
+            truncate=True,
+        )
+        if sender != current_sender:
+            if current_sender is not None:
+                grouped_lines.append(f"- `{_sanitize_text(current_sender)}`")
+                grouped_lines.extend(current_lines)
+            current_sender = sender
+            current_lines = [f"  {line}"]
+            continue
+        current_lines.append(f"  {line}")
+
+    if current_sender is not None:
+        grouped_lines.append(f"- `{_sanitize_text(current_sender)}`")
+        grouped_lines.extend(current_lines)
+
+    return grouped_lines
+
+
+def _render_context_message_line(
+    message: dict[str, Any],
+    *,
+    render_state: dict[str, Any],
+    truncate: bool,
+    include_sender: bool = False,
+) -> str:
+    time_part = _message_time_label(message)
+    sender = _message_sender_label(message)
+    raw = _semanticize_message_text(
+        str(message.get("raw_message", "") or ""),
+        bot_id=str(render_state.get("bot_id", "") or ""),
+        id_to_name=render_state.get("id_to_name", {}),
+        assistant_name=str(render_state.get("assistant_name", "Grok") or "Grok"),
+    )
+    if truncate:
+        raw = _truncate_context_message(
+            raw,
+            str(message.get("message_id", "") or ""),
+            int(render_state.get("context_message_preview_chars", 280) or 280),
+        )
+    tags = []
+    if (
+        bool(message.get("has_image", False))
+        and "[图片" not in raw
+        and "（图片）" not in raw
+    ):
+        tags.append("图片")
+    if bool(message.get("has_forward", False)) and "[合并转发]" not in raw:
+        tags.append("转发")
+    suffix = f"（{', '.join(tags)}）" if tags else ""
+    if include_sender:
+        return (
+            f"- [{time_part}] `{_sanitize_text(sender)}`：{_sanitize_text(raw)}{suffix}"
+        )
+    return f"[{time_part}] {_sanitize_text(raw)}{suffix}"
+
+
+def _truncate_context_message(text: str, message_id: str, preview_chars: int) -> str:
+    clean = str(text or "").strip()
+    if len(clean) <= preview_chars:
+        return clean
+    suffix = f"……[已截断，msg-id: `{message_id or 'unknown'}`]"
+    allowed = max(0, preview_chars - len(suffix))
+    return clean[:allowed].rstrip() + suffix

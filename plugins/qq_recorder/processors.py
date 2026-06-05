@@ -13,6 +13,7 @@ from .image_handler import process_images
 from .message_parser import ImageInfo, parse_message
 from .storage import MessageStorage
 from .text_utils import escape_text
+from .video_handler import process_videos
 
 
 class MessageProcessor:
@@ -32,6 +33,9 @@ class MessageProcessor:
         self._inflight_semaphore = asyncio.Semaphore(settings.processing.max_inflight)
         self._image_download_semaphore = asyncio.Semaphore(
             settings.processing.image_download_concurrency
+        )
+        self._video_download_semaphore = asyncio.Semaphore(
+            settings.processing.video_download_concurrency
         )
 
     async def process_message(self, event: dict) -> int | None:
@@ -76,10 +80,25 @@ class MessageProcessor:
                             "file_url": img.file_url,
                             "file_unique": img.file_unique,
                             "file_size": img.file_size,
+                            "local_path": img.local_path or None,
+                            "downloaded": bool(img.local_path),
                             "is_sticker": img.is_sticker,
                             "sticker_confidence": img.sticker_confidence,
                         }
                         for img in parsed.images
+                    ],
+                    "videos": [
+                        {
+                            "file_url": video.file_url,
+                            "file_unique": video.file_unique,
+                            "file_size": video.file_size,
+                            "local_path": video.local_path or None,
+                            "duration_sec": video.duration_sec,
+                            "downloaded": bool(video.local_path),
+                            "title": video.title,
+                            "intro": video.intro,
+                        }
+                        for video in parsed.videos
                     ],
                     "replies": [
                         {"reply_to_message_id": rep.reply_to_message_id}
@@ -113,6 +132,8 @@ class MessageProcessor:
 
                 if parsed.images:
                     await self._process_images(message_db_id, parsed.images)
+                if parsed.videos:
+                    await self._process_videos(message_db_id, parsed.videos)
 
                 return message_db_id
             except Exception as e:
@@ -208,3 +229,89 @@ class MessageProcessor:
                     )
         except Exception as e:
             self.logger.error("Image processing failed: %s", e, exc_info=True)
+
+    async def _try_apply_existing_video(self, video_info, message_db_id: int) -> bool:
+        """Returns True if the video was handled (applied cached or skipped)."""
+        if not self._should_download_video(video_info):
+            return True
+        if video_info.local_path and os.path.exists(video_info.local_path):
+            await self.storage.apply_cached_video_to_message(
+                message_db_id=message_db_id,
+                file_url=video_info.file_url,
+                local_path=video_info.local_path,
+                file_unique=video_info.file_unique or None,
+                file_size=video_info.file_size or None,
+            )
+            return True
+        if not video_info.file_url:
+            return True
+        cached = await self.storage.find_reusable_video_by_url(video_info.file_url)
+        if cached and cached.local_path and os.path.exists(cached.local_path):
+            await self.storage.apply_cached_video_to_message(
+                message_db_id=message_db_id,
+                file_url=video_info.file_url,
+                local_path=cached.local_path,
+                file_unique=cached.file_unique,
+                file_size=cached.file_size,
+            )
+            self.logger.info("Video reused: %s", cached.local_path)
+            return True
+        return False
+
+    async def _process_videos(self, message_db_id: int, videos_info) -> None:
+        if not self.settings.video.download:
+            return
+
+        try:
+            pending_videos = []
+            for video_info in videos_info:
+                handled = await self._try_apply_existing_video(
+                    video_info, message_db_id
+                )
+                if not handled:
+                    pending_videos.append(video_info)
+
+            if not pending_videos:
+                return
+
+            results = await process_videos(
+                pending_videos,
+                self.settings.storage.videos_dir,
+                self.settings.video,
+                download_semaphore=self._video_download_semaphore,
+            )
+            for video_info, result in zip(pending_videos, results, strict=True):
+                if result.success:
+                    await self.storage.apply_cached_video_to_message(
+                        message_db_id=message_db_id,
+                        file_url=video_info.file_url,
+                        local_path=result.local_path,
+                        file_unique=result.file_unique,
+                        file_size=result.file_size,
+                    )
+                    self.logger.info(
+                        "Video saved: %s (%d bytes)",
+                        result.local_path,
+                        result.file_size,
+                    )
+                else:
+                    self.logger.warning(
+                        "Video download failed [%s]: %s",
+                        video_info.file_unique,
+                        result.error,
+                    )
+        except Exception as e:
+            self.logger.error("Video processing failed: %s", e, exc_info=True)
+
+    def _should_download_video(self, video_info) -> bool:
+        if (
+            video_info.file_size
+            and video_info.file_size > self.settings.video.max_file_size
+        ):
+            return False
+        if (
+            video_info.duration_sec
+            and video_info.duration_sec > self.settings.video.max_duration_sec
+        ):
+            return False
+        return True
