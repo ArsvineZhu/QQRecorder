@@ -91,8 +91,6 @@ class VisionConfig:
     api_image_bytes_max: int = 10 * 1024 * 1024
     max_images_per_message: int = 3
     include_in_context: bool = True
-    cache_enabled: bool = True
-    cache_ttl_days: int = 30
     prompt_version: str = "visual_v1"
     schema_version: str = "visual_semantic_json_v1"
     daily_limit_image_per_user_chat: int = 30

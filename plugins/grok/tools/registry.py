@@ -45,7 +45,7 @@ class ToolRegistry:
                     "function": {
                         "name": tool.name,
                         "description": tool.description,
-                        "parameters": tool.schema,
+                        "parameters": _sanitize_schema_for_model(tool.schema),
                     },
                 }
             )
@@ -132,3 +132,16 @@ def _matches_type(value: Any, expected_type: str) -> bool:
     if expected_type == "null":
         return value is None
     return True
+
+
+def _sanitize_schema_for_model(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if key.startswith("x-"):
+                continue
+            sanitized[key] = _sanitize_schema_for_model(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_schema_for_model(item) for item in value]
+    return value

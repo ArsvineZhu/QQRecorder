@@ -77,6 +77,22 @@ class VisionQuotaTracker:
             self._video_counters[global_key] = global_used + 1
             return True
 
+    def rollback_image(self, user_id: str, chat_id: str) -> None:
+        today = date.today().isoformat()
+        with self._lock:
+            self._decrement_counter(self._image_counters, (today, user_id, chat_id))
+            self._decrement_counter(
+                self._image_counters, (today, "__global__", "__image__")
+            )
+
+    def rollback_video(self, user_id: str, chat_id: str) -> None:
+        today = date.today().isoformat()
+        with self._lock:
+            self._decrement_counter(self._video_counters, (today, user_id, chat_id))
+            self._decrement_counter(
+                self._video_counters, (today, "__global__", "__video__")
+            )
+
     # -- Diagnostic helpers --
 
     def remaining_image(self, user_id: str, chat_id: str) -> int:
@@ -91,3 +107,14 @@ class VisionQuotaTracker:
         with self._lock:
             self._image_counters.clear()
             self._video_counters.clear()
+
+    @staticmethod
+    def _decrement_counter(
+        counters: dict[tuple[str, str, str], int],
+        key: tuple[str, str, str],
+    ) -> None:
+        current = counters.get(key, 0)
+        if current <= 1:
+            counters.pop(key, None)
+            return
+        counters[key] = current - 1

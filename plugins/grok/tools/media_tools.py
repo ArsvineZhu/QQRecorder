@@ -12,7 +12,6 @@ import aiohttp
 from ..infra import save_analysis
 from ..shared import load_schema
 from ..vision.analyzer import analyze_image
-from ..vision.cache import VisionCacheStore
 from ..vision.image_prep import prepare_for_api
 from ..vision.schemas import analysis_to_dict, render_visual_context
 from ..vision.video_analyzer import analyze_video
@@ -44,7 +43,7 @@ def _read_picture_handler(plugin):
         context: dict[str, Any],
         arguments: dict[str, Any],
     ) -> ToolResponse:
-        if plugin._vision_client is None or plugin._vision_cache is None:
+        if plugin._vision_client is None:
             return ToolResponse(
                 status="failed",
                 data={},
@@ -84,18 +83,10 @@ def _read_picture_handler(plugin):
             str(getattr(image, "file_unique", "") or "")
             or hashlib.md5(image_bytes).hexdigest()
         )
-        cache_version = _cache_version(plugin)
-        cache: VisionCacheStore = plugin._vision_cache
-        cached = await cache.get_visual(
-            file_unique,
-            plugin.settings.vision.image_fast_model,
-            cache_version,
-            ttl_days=plugin.settings.vision.cache_ttl_days,
-        )
-        if cached is not None:
-            return ToolResponse(status="ok", data=analysis_to_dict(cached))
 
         quota = getattr(plugin, "_vision_quota", None)
+        user_id: str | None = None
+        chat_id: str | None = None
         if quota is not None:
             user_id, chat_id = _quota_identity(context, message)
             if not quota.check_and_consume_image(user_id, chat_id):
@@ -110,13 +101,8 @@ def _read_picture_handler(plugin):
             chat_context=str(getattr(message, "raw_message", "") or ""),
             image_mime_type=prepared.mime_type,
         )
-        if plugin.settings.vision.cache_enabled:
-            await cache.put_visual(
-                file_unique,
-                plugin.settings.vision.image_fast_model,
-                cache_version,
-                analysis,
-            )
+        if analysis.error_code and quota is not None and user_id is not None:
+            quota.rollback_image(user_id, chat_id or "unknown_chat")
         payload = analysis_to_dict(analysis)
         semantic_text = render_visual_context(analysis)
         await _persist_analysis(
@@ -146,7 +132,7 @@ def _read_video_handler(plugin):
         context: dict[str, Any],
         arguments: dict[str, Any],
     ) -> ToolResponse:
-        if plugin._vision_client is None or plugin._vision_cache is None:
+        if plugin._vision_client is None:
             return ToolResponse(
                 status="failed",
                 data={},
@@ -176,18 +162,10 @@ def _read_video_handler(plugin):
         file_unique = hashlib.sha1(
             f"{video['url']}|{video['local_path']}".encode()
         ).hexdigest()
-        cache_version = _cache_version(plugin)
-        cache: VisionCacheStore = plugin._vision_cache
-        cached = await cache.get_video(
-            file_unique,
-            plugin.settings.vision.video_summary_model,
-            cache_version,
-            ttl_days=plugin.settings.vision.cache_ttl_days,
-        )
-        if cached is not None:
-            return ToolResponse(status="ok", data=video_analysis_to_dict(cached))
 
         quota = getattr(plugin, "_vision_quota", None)
+        user_id: str | None = None
+        chat_id: str | None = None
         if quota is not None:
             user_id, chat_id = _quota_identity(context, message)
             if not quota.check_and_consume_video(user_id, chat_id):
@@ -203,13 +181,8 @@ def _read_video_handler(plugin):
             title=video["title"],
             intro=video["intro"],
         )
-        if plugin.settings.vision.cache_enabled:
-            await cache.put_video(
-                file_unique,
-                plugin.settings.vision.video_summary_model,
-                cache_version,
-                analysis,
-            )
+        if analysis.error_code and quota is not None and user_id is not None:
+            quota.rollback_video(user_id, chat_id or "unknown_chat")
         payload = video_analysis_to_dict(analysis)
         semantic_text = render_video_context(analysis)
         await _persist_analysis(
@@ -361,11 +334,6 @@ def _quota_failed(media_type: str) -> ToolResponse:
 def _clean_string(value) -> str | None:
     text = str(value or "").strip()
     return text or None
-
-
-def _cache_version(plugin) -> str:
-    vision = plugin.settings.vision
-    return f"{vision.prompt_version}:{vision.schema_version}"
 
 
 async def _persist_analysis(

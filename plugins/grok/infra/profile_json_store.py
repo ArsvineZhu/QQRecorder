@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -77,10 +78,39 @@ class ProfileJsonStore:
             with self._lock:
                 self._ensure_loaded()
                 raw = self._reload()
-                raw["users"][str(user_id)] = data
+                record = dict(data)
+                record["user_id"] = str(user_id)
+                raw["users"][str(user_id)] = record
                 self._flush(raw)
 
         await asyncio.to_thread(_upsert)
+
+    async def patch_profile(
+        self,
+        user_id: str,
+        updates: dict[str, Any],
+        remove_keys: tuple[str, ...] = (),
+        transform: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        def _patch() -> None:
+            with self._lock:
+                self._ensure_loaded()
+                raw = self._reload()
+                existing = raw["users"].get(str(user_id))
+                if isinstance(existing, dict):
+                    record = dict(existing)
+                else:
+                    record = {"user_id": str(user_id)}
+                record.update(updates)
+                for key in remove_keys:
+                    record.pop(key, None)
+                if transform is not None:
+                    transform(record)
+                record["user_id"] = str(user_id)
+                raw["users"][str(user_id)] = record
+                self._flush(raw)
+
+        await asyncio.to_thread(_patch)
 
     async def delete_profile(self, user_id: str) -> None:
         def _delete() -> None:

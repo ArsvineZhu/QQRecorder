@@ -15,6 +15,7 @@ from ..context.evidence import (
     EvidenceBlock,
 )
 from ..tools.context_tools import build_context_tools
+from ..tools.guide_tools import build_load_tool_guide_tool
 from ..tools.media_tools import build_media_tools
 from ..tools.profile_tools import (
     build_create_profile_tool,
@@ -23,6 +24,7 @@ from ..tools.profile_tools import (
     build_update_profile_tool,
 )
 from ..tools.registry import ToolRegistry, ToolResponse
+from ..tools.terminate_tools import build_terminate_tool
 
 logger = logging.getLogger("grok.runtime")
 
@@ -139,7 +141,8 @@ class AgentRuntime:
                     status="pending",
                     summary="",
                 )
-                if total_tool_calls >= max_tool_calls_total:
+                counts_against_budget = _counts_against_budget(tool_call.name)
+                if counts_against_budget and total_tool_calls >= max_tool_calls_total:
                     budget_response = ToolResponse(
                         status="failed",
                         data={},
@@ -224,10 +227,11 @@ class AgentRuntime:
                     tool_call.arguments,
                 )
                 try:
-                    total_tool_calls += 1
-                    working_context.tool_call_budget_remaining = max(
-                        0, max_tool_calls_total - total_tool_calls
-                    )
+                    if counts_against_budget:
+                        total_tool_calls += 1
+                        working_context.tool_call_budget_remaining = max(
+                            0, max_tool_calls_total - total_tool_calls
+                        )
                     result = await self.registry.execute(
                         tool_call.name,
                         tool_call.arguments,
@@ -279,6 +283,21 @@ class AgentRuntime:
                             metadata={"arguments": tool_call.arguments},
                         )
                     )
+                    if tool_call.name == "terminate":
+                        step.summary = rendered
+                        steps.append(step)
+                        logger.info("runtime: terminate requested")
+                        return AgentOutcome(
+                            text="",
+                            working_context=working_context,
+                            steps=steps,
+                            model_name=turn.model_name,
+                            error_code="terminated_by_agent",
+                            termination_reason=_termination_reason(
+                                tool_call.arguments,
+                                result,
+                            ),
+                        )
                 steps.append(step)
 
                 # Append tool result to self._messages_history for next API call
@@ -323,10 +342,12 @@ class AgentRuntime:
     @staticmethod
     def _build_registry(plugin) -> ToolRegistry:
         registry = ToolRegistry()
+        registry.register(build_load_tool_guide_tool(plugin))
         for tool in build_context_tools(plugin):
             registry.register(tool)
         for tool in build_media_tools(plugin):
             registry.register(tool)
+        registry.register(build_terminate_tool(plugin))
         registry.register(build_load_profile_tool(plugin))
         registry.register(build_create_profile_tool(plugin))
         registry.register(build_update_profile_tool(plugin))
@@ -341,6 +362,10 @@ def _tool_call_total_budget(agent_settings: Any) -> int:
     max_steps = max(1, int(getattr(agent_settings, "max_steps", 4) or 4))
     per_turn = max(1, int(getattr(agent_settings, "max_tool_calls_per_turn", 3) or 3))
     return max_steps * per_turn
+
+
+def _counts_against_budget(tool_name: str) -> bool:
+    return tool_name != "load_tool_guide"
 
 
 def _assistant_name(settings: Any) -> str:
@@ -641,3 +666,17 @@ def _clip_text(text: str, limit: int) -> str:
     if limit <= 1:
         return text[:limit]
     return text[: limit - 1] + "…"
+
+
+def _termination_reason(arguments: dict[str, Any], result: Any) -> str | None:
+    raw_reason = str(arguments.get("reason", "") or "").strip()
+    if raw_reason:
+        return raw_reason
+    if isinstance(result, ToolResponse):
+        data_reason = result.data.get("reason")
+        return str(data_reason).strip() or None
+    if isinstance(result, dict):
+        data = result.get("data", {}) or {}
+        if isinstance(data, dict):
+            return str(data.get("reason", "") or "").strip() or None
+    return None

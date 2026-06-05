@@ -1,6 +1,7 @@
 from plugins.grok.agent.prompt import (
     build_model_messages,
     render_system_prompt,
+    render_tool_access_block,
 )
 from plugins.grok.config import build_config
 from plugins.grok.context.evidence import (
@@ -27,6 +28,12 @@ def test_render_system_prompt_uses_grok_template_text():
     assert "## 运行时身份（动态注入）" in rendered
     assert "你的 QQ/self_id：`unknown`" in rendered
     assert "不要把聊天记录" in rendered
+    assert "默认只看到每个工具的用途摘要" in rendered
+    assert "load_tool_guide" in rendered
+    assert "获取更多信息" not in rendered
+    assert "JSON 动态注入" not in rendered
+    assert "## `terminate`" not in rendered
+    assert "群聊里没有人明确要你回答" not in rendered
     assert "回复要短、快、有判断，适合插入群聊。" not in rendered
 
 
@@ -46,6 +53,17 @@ def test_render_system_prompt_uses_configured_assistant_name():
 
     assert "AI 助手 博士" in rendered
     assert "AI 助手 Grok" not in rendered
+
+
+def test_render_tool_access_block_only_mentions_layered_loading():
+    block = render_tool_access_block()
+
+    assert "默认只看到每个工具的用途摘要" in block
+    assert "工具不只用于获取信息" in block
+    assert "load_tool_guide" in block
+    assert "JSON 动态注入" not in block
+    assert "## `track_reply`" not in block
+    assert "如果已经返回空，不要重复调用" not in block
 
 
 def test_build_model_messages_puts_scene_specific_instructions_in_user_context():
@@ -75,7 +93,7 @@ def test_build_model_messages_puts_scene_specific_instructions_in_user_context()
     assert "看看这个" in messages[1]["content"].split("## 会话元信息", 1)[0]
     assert "## 回复要求" not in messages[1]["content"]
     assert "请生成一条可以直接发送到 IM 平台的回复" not in messages[1]["content"]
-    assert "---\n\n工具数据" in messages[1]["content"]
+    assert "---\n\n## 工具数据" in messages[1]["content"]
     assert "- 本轮工具总额度：`0`" in messages[1]["content"]
     assert "- 当前剩余额度：`0`" in messages[1]["content"]
 
@@ -102,7 +120,7 @@ def test_build_model_messages_appends_tool_budget_block():
 
     messages = build_model_messages(working_context, settings)
 
-    assert "---\n\n工具数据" in messages[1]["content"]
+    assert "---\n\n## 工具数据" in messages[1]["content"]
     assert "- 本轮工具总额度：`6`" in messages[1]["content"]
     assert "- 当前剩余额度：`4`" in messages[1]["content"]
 

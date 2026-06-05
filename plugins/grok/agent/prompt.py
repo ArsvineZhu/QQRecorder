@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ..shared import load_tool_prompt_assets
+
 
 def _top(data: dict) -> dict:
     """Normalize to ``{"data": {...}}`` wrapper format.
@@ -24,11 +26,32 @@ def render_system_prompt(settings, *, values: dict[str, str]) -> str:
     replacements = {
         "runtime_identity_block": _build_runtime_identity_block(None),
         "assistant_name": _assistant_name(settings),
+        "tool_access_block": render_tool_access_block(),
     }
     replacements.update(values)
     for key, value in replacements.items():
         rendered = rendered.replace(f"{{{{{key}}}}}", value)
     return rendered
+
+
+def render_tool_access_block() -> str:
+    config, _payloads = load_tool_prompt_assets()
+    guide_tool_name = str(config.get("guide_tool_name", "load_tool_guide") or "")
+    lines = ["## 工具说明访问规则", ""]
+    intro = str(config.get("compact_intro", "") or "").strip()
+    if intro:
+        lines.append(intro)
+    compact_guidance = config.get("compact_guidance", []) or []
+    for item in compact_guidance:
+        text = str(item or "").strip()
+        if text:
+            lines.append(f"- {text}")
+    if guide_tool_name:
+        lines.append(
+            "- 如果你准备使用某个工具，但不确定它的用法、边界或参数习惯，"
+            f"先调用 `{guide_tool_name}`"
+        )
+    return "\n".join(line.rstrip() for line in lines).strip()
 
 
 def build_model_messages(
@@ -171,7 +194,7 @@ def _build_user_content(working_context, settings) -> str:
             "",
             "---",
             "",
-            "工具数据",
+            "## 工具数据",
             f"- 本轮工具总额度："
             f"`{int(getattr(working_context, 'tool_call_budget_total', 0) or 0)}`",
             f"- 当前剩余额度："
@@ -363,7 +386,7 @@ def _render_load_profile(data: dict, _render_state: dict[str, Any]) -> str:
         "group_nickname": "群昵称",
         "group_instruction": "群聊指令",
         "private_instruction": "私聊指令",
-        "language_style": "语言风格",
+        "language_style": "语言风格偏好",
         "habit_preferences": "习惯偏好",
     }
     lines: list[str] = ["### 用户档案"]

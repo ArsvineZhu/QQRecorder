@@ -666,13 +666,28 @@ class MessageStorage:
         video_id: int | None = None,
         message_id: int | None = None,
     ) -> None:
+        def _apply_row_update(row: ImageAnalysis) -> None:
+            row.analysis_json = analysis_json
+            row.media_type = media_type
+            row.image_type = image_type
+            row.semantic_text = semantic_text
+            row.confidence = confidence
+            row.prompt_version = prompt_version
+            row.schema_version = schema_version
+            if image_id is not None:
+                row.image_id = image_id
+            if video_id is not None:
+                row.video_id = video_id
+            if message_id is not None:
+                row.message_id = message_id
+
         async def _upsert() -> None:
             async with self._session() as session:
+                stmt = select(ImageAnalysis).where(
+                    ImageAnalysis.file_unique == file_unique,
+                    ImageAnalysis.model_used == model_used,
+                )
                 try:
-                    stmt = select(ImageAnalysis).where(
-                        ImageAnalysis.file_unique == file_unique,
-                        ImageAnalysis.model_used == model_used,
-                    )
                     result = await session.execute(stmt)
                     row = result.scalar_one_or_none()
                     if row is None:
@@ -693,19 +708,15 @@ class MessageStorage:
                             )
                         )
                     else:
-                        row.analysis_json = analysis_json
-                        row.media_type = media_type
-                        row.image_type = image_type
-                        row.semantic_text = semantic_text
-                        row.confidence = confidence
-                        row.prompt_version = prompt_version
-                        row.schema_version = schema_version
-                        if image_id is not None:
-                            row.image_id = image_id
-                        if video_id is not None:
-                            row.video_id = video_id
-                        if message_id is not None:
-                            row.message_id = message_id
+                        _apply_row_update(row)
+                    await session.commit()
+                except IntegrityError:
+                    await session.rollback()
+                    result = await session.execute(stmt)
+                    row = result.scalar_one_or_none()
+                    if row is None:
+                        raise
+                    _apply_row_update(row)
                     await session.commit()
                 except Exception:
                     await session.rollback()

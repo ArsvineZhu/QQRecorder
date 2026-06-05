@@ -58,3 +58,4 @@ class AgentOutcome:
     steps: list[AgentStep]
     model_name: str = ""
     error_code: str | None = None
+    termination_reason: str | None = None

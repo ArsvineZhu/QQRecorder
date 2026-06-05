@@ -6,13 +6,13 @@ import logging
 import time
 
 from ..delivery import SendOutcome, send_reply
+from ..profile_defaults import build_default_profile
 from ..trigger import final_decision, prefilter_event
 
 logger = logging.getLogger("grok.orchestrator")
 
 
 async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
-    raw_chat_type = chat_type
     del chat_type
     prefilter_reason = prefilter_event(event, plugin.settings)
     if prefilter_reason is None and not plugin.settings.trigger.allow_reply_to_bot:
@@ -84,32 +84,13 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
     if profile_store is not None:
         existing = await profile_store.get_profile(user_id_str)
         if existing is None:
-            chat_type_val = str(getattr(source_msg, "chat_type", "") or "")
-            group_instr = (
-                "回复要短、快、有判断，适合插入群聊。不要长篇解释；"
-                "除非用户明确要求详细分析，否则控制在 1 到 4 句话。"
+            record = build_default_profile(
+                user_id=user_id_str,
+                chat_type=str(getattr(source_msg, "chat_type", "") or ""),
+                chat_id=chat_id_str,
+                sender_nickname=str(getattr(source_msg, "sender_nickname", "") or ""),
+                sender_card=str(getattr(source_msg, "sender_card", "") or ""),
             )
-            private_instr = (
-                "回复更完整，但仍然保持直接、有判断、机智"
-                "能给结论就先给结论，必要时再解释。"
-            )
-            record: dict = {
-                "user_id": user_id_str,
-                "username": "",
-                "preferred_name": "",
-                "group_instruction": group_instr
-                if chat_type_val == "group"
-                else private_instr,
-                "private_instruction": private_instr,
-                "language_style": "",
-                "habit_preferences": [],
-                "group_nicknames": {},
-            }
-            sender_card = str(getattr(source_msg, "sender_card", "") or "")
-            sender_nick = str(getattr(source_msg, "sender_nickname", "") or "")
-            record["username"] = (sender_nick or sender_card or user_id_str)[:100]
-            if raw_chat_type == "group" and sender_card:
-                record["group_nicknames"] = {chat_id_str: sender_card[:100]}
             await profile_store.upsert_profile(user_id_str, record)
             logger.info(
                 "handle: auto-created profile user=%s",
@@ -138,6 +119,7 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
                     {"kind": b.kind, "label": b.label, "content": b.content}
                     for b in working.evidence
                 ],
+                "termination_reason": outcome.termination_reason,
             },
             ensure_ascii=False,
         ),

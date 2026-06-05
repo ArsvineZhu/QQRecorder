@@ -55,7 +55,7 @@ def test_backfill_semantic_texts_recovers_image_and_video_rows(tmp_path: Path):
             """
             INSERT INTO image_analyses
                 (file_unique, media_type, analysis_json,
-                semantic_text)  # noqa: E501
+                semantic_text)
             VALUES (?, ?, ?, '')
             """,
             (

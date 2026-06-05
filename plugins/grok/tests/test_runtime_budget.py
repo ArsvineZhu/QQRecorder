@@ -193,6 +193,37 @@ class _AlwaysToolAdapter:
         )
 
 
+class _SequencedToolAdapter:
+    def __init__(self, sequence):
+        self.calls = 0
+        self.sequence = sequence
+
+    async def run(self, *, working_context, settings, registry, api):
+        del working_context, settings, registry, api
+        item = self.sequence[self.calls]
+        self.calls += 1
+        if item["kind"] == "tool":
+            return SimpleNamespace(
+                text="",
+                tool_calls=[
+                    AgentToolCall(
+                        name=item["name"],
+                        arguments=item.get("arguments", {}),
+                    )
+                ],
+                model_name="demo",
+                request_summary=f"req-{self.calls}",
+                response_summary=item["name"],
+            )
+        return SimpleNamespace(
+            text=item["text"],
+            tool_calls=[],
+            model_name="demo",
+            request_summary=f"req-{self.calls}",
+            response_summary="final",
+        )
+
+
 def test_runtime_stops_at_global_tool_call_budget():
     async def _run():
         plugin = SimpleNamespace(
@@ -295,5 +326,63 @@ def test_runtime_skips_duplicate_track_reply_and_continues():
         assert payload["status"] == "failed"
         assert payload["error_code"] == "duplicate_track_reply"
         assert payload["retryable"] is False
+
+    asyncio.run(_run())
+
+
+def test_runtime_does_not_charge_budget_for_load_tool_guide():
+    async def _run():
+        plugin = SimpleNamespace(
+            settings=SimpleNamespace(
+                agent=SimpleNamespace(
+                    max_steps=4,
+                    max_tool_calls_per_turn=1,
+                    max_tool_calls_total=1,
+                    max_evidence_chars=120,
+                )
+            ),
+            api=SimpleNamespace(ai=object()),
+        )
+        registry = _LargePayloadRegistry()
+        runtime = AgentRuntime(
+            plugin,
+            registry=registry,
+            model_runner=_SequencedToolAdapter(
+                [
+                    {"kind": "tool", "name": "load_tool_guide", "arguments": {}},
+                    {"kind": "tool", "name": "load_tool_guide", "arguments": {}},
+                    {"kind": "tool", "name": "load_context", "arguments": {}},
+                    {"kind": "final", "text": "done"},
+                ]
+            ).run,
+        )
+        source_msg = SimpleNamespace(
+            chat_type="group",
+            group_id="30001",
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="/agent hi",
+        )
+        event = SimpleNamespace(
+            group_id="30001",
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="/agent hi",
+        )
+
+        outcome = await runtime.run(
+            event=event,
+            source_msg=source_msg,
+            trigger_reason="prefix:/agent",
+        )
+
+        assert outcome.text == "done"
+        assert outcome.working_context.tool_call_budget_total == 1
+        assert outcome.working_context.tool_call_budget_remaining == 0
+        assert [step.tool_name for step in outcome.steps if step.status == "ok"] == [
+            "load_tool_guide",
+            "load_tool_guide",
+            "load_context",
+        ]
 
     asyncio.run(_run())

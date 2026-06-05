@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..profile_defaults import build_default_profile
 from ..shared import load_schema
 from .registry import ToolDefinition, ToolResponse
 
@@ -19,14 +20,26 @@ def _convert_prefs(raw: Any) -> list[str]:
 
 
 async def load_profile(
-    *, chat_type: str, chat_id: str, user_id: str, store
+    *,
+    chat_type: str,
+    chat_id: str,
+    user_id: str,
+    store,
+    sender_nickname: str = "",
+    sender_card: str = "",
 ) -> ToolResponse:
     """Load profile from JSON store, auto-create if new user."""
     if store is None:
         return ToolResponse(status="ok", data={})
     data = await store.get_profile(user_id)
     if data is None:
-        record = {"user_id": user_id}
+        record = build_default_profile(
+            user_id=user_id,
+            chat_type=chat_type,
+            chat_id=chat_id,
+            sender_nickname=sender_nickname,
+            sender_card=sender_card,
+        )
         await store.upsert_profile(user_id, record)
         data = record
 
@@ -71,19 +84,25 @@ def build_load_profile_tool(plugin) -> ToolDefinition:
         chat_type = str(context.get("chat_type") or "")
         chat_id = str(context.get("chat_id") or "")
         user_id = str(arguments.get("user_id") or context.get("user_id") or "")
+        source_msg = context.get("source_msg")
         store = getattr(plugin, "_profile_json_store", None)
         return await load_profile(
             chat_type=chat_type,
             chat_id=chat_id,
             user_id=user_id,
             store=store,
+            sender_nickname=str(
+                getattr(source_msg, "sender_nickname", "")
+                or getattr(source_msg, "sender_card", "")
+                or ""
+            ),
+            sender_card=str(getattr(source_msg, "sender_card", "") or ""),
         )
 
     return ToolDefinition(
         name="load_profile",
         description=(
-            "Load conversation preferences for the current user."
-            " Auto-creates if not found."
+            "Load the current user's profile defaults and personalized preferences."
         ),
         schema=load_schema("tools/load_profile.json"),
         handler=_handler,
@@ -188,14 +207,18 @@ def build_update_profile_tool(plugin) -> ToolDefinition:
             return ToolResponse(
                 status="failed", data={}, error_code="store_unavailable"
             )
-        existing: dict[str, Any] = await store.get_profile(user_id) or {
-            "user_id": user_id
-        }
-        _apply_common_fields(existing, arguments)
+        updates: dict[str, Any] = {}
+        _apply_common_fields(updates, arguments)
         raw_nick = arguments.get("group_nickname")
+        transform = None
         if raw_nick is not None:
-            _apply_group_nickname(existing, raw_nick, context.get("chat_id", ""))
-        await store.upsert_profile(user_id, existing)
+            chat_id = str(context.get("chat_id", "") or "")
+
+            def _transform(record: dict[str, Any]) -> None:
+                _apply_group_nickname(record, raw_nick, chat_id)
+
+            transform = _transform
+        await store.patch_profile(user_id, updates, transform=transform)
         updated_fields = [
             k for k in arguments if k != "user_id" and arguments[k] is not None
         ]
@@ -234,12 +257,26 @@ def build_delete_profile_tool(plugin) -> ToolDefinition:
             return ToolResponse(
                 status="failed", data={}, error_code="store_unavailable"
             )
-        await store.delete_profile(user_id)
-        return ToolResponse(status="ok", data={}, message="profile deleted")
+        source_msg = context.get("source_msg")
+        chat_type = str(context.get("chat_type") or "")
+        chat_id = str(context.get("chat_id") or "")
+        record = build_default_profile(
+            user_id=user_id,
+            chat_type=chat_type,
+            chat_id=chat_id,
+            sender_nickname=str(
+                getattr(source_msg, "sender_nickname", "")
+                or getattr(source_msg, "sender_card", "")
+                or ""
+            ),
+            sender_card=str(getattr(source_msg, "sender_card", "") or ""),
+        )
+        await store.upsert_profile(user_id, record)
+        return ToolResponse(status="ok", data={}, message="profile reset")
 
     return ToolDefinition(
         name="delete_profile",
-        description="Permanently delete the current user's profile.",
+        description="Reset the current user's profile back to its default state.",
         schema=load_schema("tools/delete_profile.json"),
         handler=_handler,
     )

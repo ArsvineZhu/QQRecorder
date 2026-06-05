@@ -1,7 +1,11 @@
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 
+from plugins.grok.app.runtime import AgentRuntime
+from plugins.grok.tools.guide_tools import build_load_tool_guide_tool
 from plugins.grok.tools.registry import (
     ToolArgumentError,
     ToolDefinition,
@@ -11,6 +15,14 @@ from plugins.grok.tools.registry import (
 
 async def _echo_tool(_context, arguments):
     return {"status": "ok", "data": {"echo": arguments["query"]}}
+
+
+def _tool_schema_payloads():
+    tools_dir = Path(__file__).resolve().parent.parent / "schemas" / "tools"
+    for path in sorted(tools_dir.glob("*.json")):
+        if path.name.startswith("_"):
+            continue
+        yield path.stem, json.loads(path.read_text(encoding="utf-8"))
 
 
 def test_tool_registry_rejects_unknown_arguments():
@@ -89,3 +101,143 @@ def test_tool_registry_executes_registered_tool():
         assert result["data"]["echo"] == "topic"
 
     asyncio.run(_run())
+
+
+def test_agent_runtime_registry_exposes_terminate_and_load_tool_guide_tools():
+    plugin = type(
+        "PluginStub",
+        (),
+        {
+            "settings": type(
+                "SettingsStub",
+                (),
+                {
+                    "agent": type(
+                        "AgentStub",
+                        (),
+                        {
+                            "max_steps": 3,
+                            "max_tool_calls_per_turn": 2,
+                        },
+                    )(),
+                    "vision": type(
+                        "VisionStub",
+                        (),
+                        {
+                            "api_image_bytes_max": 1024,
+                            "image_fast_model": "image-model",
+                            "video_summary_model": "video-model",
+                            "prompt_version": "prompt-v1",
+                            "schema_version": "schema-v1",
+                        },
+                    )(),
+                },
+            )(),
+            "_bridge": None,
+            "_vision_client": None,
+            "_vision_quota": None,
+            "_profile_json_store": None,
+        },
+    )()
+
+    runtime = AgentRuntime(plugin)
+    tool_names = {
+        item["function"]["name"] for item in runtime.registry.list_for_model()
+    }
+
+    assert "terminate" in tool_names
+    assert "load_tool_guide" in tool_names
+
+
+def test_tool_registry_strips_internal_prompt_metadata_from_model_schema():
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="read_picture",
+            description="Analyze an image attached to a recorded message.",
+            schema={
+                "type": "object",
+                "description": "Top-level schema purpose.",
+                "additionalProperties": False,
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID to inspect.",
+                    }
+                },
+                "x-prompt": {
+                    "summary": "internal summary",
+                    "usage": ["internal usage"],
+                },
+            },
+            handler=_echo_tool,
+        )
+    )
+
+    exposed = registry.list_for_model()[0]["function"]["parameters"]
+
+    assert "x-prompt" not in exposed
+    assert (
+        exposed["properties"]["message_id"]["description"] == "Message ID to inspect."
+    )
+
+
+def test_load_tool_guide_tool_returns_full_guidance_for_one_tool():
+    async def _run():
+        tool = build_load_tool_guide_tool(None)
+
+        result = await tool.handler({}, {"tool_name": "terminate"})
+
+        assert result.status == "ok"
+        assert result.data["tool_name"] == "terminate"
+        assert "静默结束本轮 Agent" in result.data["summary"]
+        assert any("不会发送任何消息" in item for item in result.data["boundaries"])
+
+    asyncio.run(_run())
+
+
+def test_load_tool_guide_tool_rejects_unknown_tool_name():
+    async def _run():
+        tool = build_load_tool_guide_tool(None)
+
+        result = await tool.handler({}, {"tool_name": "missing_tool"})
+
+        assert result.status == "failed"
+        assert result.error_code == "unknown_tool_guide"
+
+    asyncio.run(_run())
+
+
+def test_all_tool_schemas_expose_complete_prompt_guidance_without_impl_leaks():
+    banned_phrases = [
+        "JSON 文件",
+        "动态注入",
+        "视觉 AI 模型",
+        "内部调试",
+        "内部 trace",
+        "系统会自动",
+        "下一个回合",
+    ]
+
+    for tool_name, payload in _tool_schema_payloads():
+        meta = payload.get("x-prompt", {}) or {}
+
+        assert meta.get("summary"), f"{tool_name} missing x-prompt.summary"
+        assert meta.get("usage"), f"{tool_name} missing x-prompt.usage"
+        assert meta.get("guidance"), f"{tool_name} missing x-prompt.guidance"
+        assert meta.get("boundaries"), f"{tool_name} missing x-prompt.boundaries"
+
+        text_parts = [str(payload.get("description", "") or "")]
+        for prop in (payload.get("properties", {}) or {}).values():
+            if isinstance(prop, dict):
+                text_parts.append(str(prop.get("description", "") or ""))
+        for key in ("summary",):
+            text_parts.append(str(meta.get(key, "") or ""))
+        for key in ("usage", "guidance", "boundaries"):
+            text_parts.extend(str(item or "") for item in (meta.get(key, []) or []))
+
+        joined = "\n".join(text_parts)
+        for phrase in banned_phrases:
+            assert phrase not in joined, (
+                f"{tool_name} leaks implementation detail: {phrase}"
+            )

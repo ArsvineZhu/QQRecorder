@@ -7,5 +7,22 @@
       "description": "要读取的记录消息 ID。通常来自上下文中的 msg-id。"
     }
   },
-  "required": ["message_id"]
+  "required": ["message_id"],
+  "description": "按 message_id 读取一条完整记录消息，常用于展开上下文里被截断的长消息。",
+  "x-prompt": {
+    "summary": "按 message_id 读取一条完整记录消息",
+    "usage": [
+      "只在上下文出现 `已截断，msg-id: ...` 标记时优先调用",
+      "必须传 message_id"
+    ],
+    "guidance": [
+      "只展开与当前问题有关的那条长消息",
+      "如果只是想看最近背景，改用 load_context"
+    ],
+    "boundaries": [
+      "不要把它当成批量历史读取工具",
+      "不要为了好奇展开与当前问题无关的长消息",
+      "展开后仍要以当前消息的意图为准"
+    ]
+  }
 }

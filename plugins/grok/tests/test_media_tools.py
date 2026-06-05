@@ -3,22 +3,8 @@ import json
 from types import SimpleNamespace
 
 from plugins.grok.tools import media_tools
-from plugins.grok.vision.schemas import normalize_analysis
+from plugins.grok.vision.schemas import VisualAnalysis, normalize_analysis
 from plugins.grok.vision.video_schemas import VideoAnalysis
-
-
-class _CacheStub:
-    async def get_visual(self, *args, **kwargs):
-        return None
-
-    async def get_video(self, *args, **kwargs):
-        return None
-
-    async def put_visual(self, *args, **kwargs):
-        return None
-
-    async def put_video(self, *args, **kwargs):
-        return None
 
 
 class _QuotaStub:
@@ -27,6 +13,8 @@ class _QuotaStub:
         self.allow_video = allow_video
         self.image_calls = []
         self.video_calls = []
+        self.image_rollbacks = []
+        self.video_rollbacks = []
 
     def check_and_consume_image(self, user_id, chat_id):
         self.image_calls.append((user_id, chat_id))
@@ -36,15 +24,19 @@ class _QuotaStub:
         self.video_calls.append((user_id, chat_id))
         return self.allow_video
 
+    def rollback_image(self, user_id, chat_id):
+        self.image_rollbacks.append((user_id, chat_id))
 
-def _settings(*, cache_enabled=False):
+    def rollback_video(self, user_id, chat_id):
+        self.video_rollbacks.append((user_id, chat_id))
+
+
+def _settings():
     return SimpleNamespace(
         vision=SimpleNamespace(
             api_image_bytes_max=1024 * 1024,
             image_fast_model="image-model",
             video_summary_model="video-model",
-            cache_ttl_days=30,
-            cache_enabled=cache_enabled,
             prompt_version="prompt-v1",
             schema_version="schema-v1",
         )
@@ -64,7 +56,6 @@ def test_read_picture_checks_quota_before_paid_model(tmp_path, monkeypatch):
         quota = _QuotaStub(allow_image=False)
         plugin = SimpleNamespace(
             _vision_client=object(),
-            _vision_cache=_CacheStub(),
             _vision_quota=quota,
             _bridge=None,
             settings=_settings(),
@@ -142,7 +133,6 @@ def test_read_video_resolves_message_id_before_extracting_sources(monkeypatch):
         )
         plugin = SimpleNamespace(
             _vision_client=object(),
-            _vision_cache=_CacheStub(),
             _vision_quota=None,
             _bridge=SimpleNamespace(get_message=lambda message_id: old_message),
             settings=_settings(),
@@ -206,7 +196,6 @@ def test_read_video_checks_quota_before_paid_model(monkeypatch):
         quota = _QuotaStub(allow_video=False)
         plugin = SimpleNamespace(
             _vision_client=object(),
-            _vision_cache=_CacheStub(),
             _vision_quota=quota,
             _bridge=None,
             settings=_settings(),
@@ -251,7 +240,6 @@ def test_read_picture_persists_semantic_text(tmp_path, monkeypatch):
         image_path.write_bytes(b"not-really-an-image")
         plugin = SimpleNamespace(
             _vision_client=object(),
-            _vision_cache=_CacheStub(),
             _vision_quota=None,
             _bridge=None,
             settings=_settings(),
@@ -301,7 +289,6 @@ def test_read_video_persists_semantic_text(monkeypatch):
     async def _run():
         plugin = SimpleNamespace(
             _vision_client=object(),
-            _vision_cache=_CacheStub(),
             _vision_quota=None,
             _bridge=None,
             settings=_settings(),
@@ -347,5 +334,215 @@ def test_read_video_persists_semantic_text(monkeypatch):
         assert "视频类型：screen_recording" in captured["semantic_text"]
         assert "时长：约 24 秒" in captured["semantic_text"]
         assert "核心含义：在说明沟通混乱" in captured["semantic_text"]
+
+    asyncio.run(_run())
+
+
+def test_read_picture_rejects_when_vision_client_absent():
+    async def _run():
+        plugin = SimpleNamespace(
+            _vision_client=None,
+            _vision_quota=None,
+            _bridge=None,
+            settings=_settings(),
+        )
+
+        result = await _media_tool(plugin, "read_picture").handler({}, {})
+
+        assert result.status == "failed"
+        assert result.error_code == "vision_unavailable"
+
+    asyncio.run(_run())
+
+
+def test_read_video_rejects_when_vision_client_absent():
+    async def _run():
+        plugin = SimpleNamespace(
+            _vision_client=None,
+            _vision_quota=None,
+            _bridge=None,
+            settings=_settings(),
+        )
+
+        result = await _media_tool(plugin, "read_video").handler({}, {})
+
+        assert result.status == "failed"
+        assert result.error_code == "vision_unavailable"
+
+    asyncio.run(_run())
+
+
+def test_read_picture_rolls_back_quota_on_analysis_error(tmp_path, monkeypatch):
+    async def _run():
+        image_path = tmp_path / "image.bin"
+        image_path.write_bytes(b"not-really-an-image")
+        quota = _QuotaStub()
+        plugin = SimpleNamespace(
+            _vision_client=object(),
+            _vision_quota=quota,
+            _bridge=None,
+            settings=_settings(),
+        )
+        message = SimpleNamespace(
+            id=10,
+            user_id="20001",
+            group_id="30001",
+            raw_message="图片消息",
+            images=[
+                SimpleNamespace(id=1, local_path=str(image_path), file_unique="fu")
+            ],
+        )
+
+        async def _analyze_image(*args, **kwargs):
+            del args, kwargs
+            return VisualAnalysis(error_code="vision_timeout")
+
+        monkeypatch.setattr(media_tools, "analyze_image", _analyze_image)
+
+        result = await _media_tool(plugin, "read_picture").handler(
+            {"source_msg": message, "user_id": "20001", "chat_id": "30001"},
+            {},
+        )
+
+        assert result.status == "failed"
+        assert result.error_code == "vision_timeout"
+        assert quota.image_calls == [("20001", "30001")]
+        assert quota.image_rollbacks == [("20001", "30001")]
+
+    asyncio.run(_run())
+
+
+def test_read_video_rolls_back_quota_on_analysis_error(monkeypatch):
+    async def _run():
+        quota = _QuotaStub()
+        plugin = SimpleNamespace(
+            _vision_client=object(),
+            _vision_quota=quota,
+            _bridge=None,
+            settings=_settings(),
+        )
+        message = SimpleNamespace(
+            id=20,
+            user_id="20002",
+            group_id="30001",
+            raw_message="视频消息",
+            segments=[
+                SimpleNamespace(
+                    segment_type="video",
+                    segment_data=json.dumps(
+                        {"url": "https://example.test/video.mp4", "file": "/tmp/v.mp4"}
+                    ),
+                )
+            ],
+        )
+
+        async def _analyze_video(*args, **kwargs):
+            del args, kwargs
+            return VideoAnalysis(error_code="video_timeout")
+
+        monkeypatch.setattr(media_tools, "analyze_video", _analyze_video)
+
+        result = await _media_tool(plugin, "read_video").handler(
+            {"source_msg": message, "user_id": "20002", "chat_id": "30001"},
+            {},
+        )
+
+        assert result.status == "failed"
+        assert result.error_code == "video_timeout"
+        assert quota.video_calls == [("20002", "30001")]
+        assert quota.video_rollbacks == [("20002", "30001")]
+
+    asyncio.run(_run())
+
+
+def test_read_picture_success_does_not_roll_back_quota(tmp_path, monkeypatch):
+    async def _run():
+        image_path = tmp_path / "image.bin"
+        image_path.write_bytes(b"not-really-an-image")
+        quota = _QuotaStub()
+        plugin = SimpleNamespace(
+            _vision_client=object(),
+            _vision_quota=quota,
+            _bridge=None,
+            settings=_settings(),
+        )
+        message = SimpleNamespace(
+            id=10,
+            user_id="20001",
+            group_id="30001",
+            raw_message="图片消息",
+            images=[
+                SimpleNamespace(id=1, local_path=str(image_path), file_unique="fu")
+            ],
+        )
+
+        async def _persist_analysis(*args, **kwargs):
+            del args, kwargs
+            return None
+
+        monkeypatch.setattr(
+            media_tools,
+            "analyze_image",
+            lambda *args, **kwargs: asyncio.sleep(
+                0, result=normalize_analysis({"image_type": "meme", "confidence": 0.8})
+            ),
+        )
+        monkeypatch.setattr(media_tools, "_persist_analysis", _persist_analysis)
+
+        result = await _media_tool(plugin, "read_picture").handler(
+            {"source_msg": message, "user_id": "20001", "chat_id": "30001"},
+            {},
+        )
+
+        assert result.status == "ok"
+        assert quota.image_calls == [("20001", "30001")]
+        assert quota.image_rollbacks == []
+
+    asyncio.run(_run())
+
+
+def test_read_video_success_does_not_roll_back_quota(monkeypatch):
+    async def _run():
+        quota = _QuotaStub()
+        plugin = SimpleNamespace(
+            _vision_client=object(),
+            _vision_quota=quota,
+            _bridge=None,
+            settings=_settings(),
+        )
+        message = SimpleNamespace(
+            id=20,
+            user_id="20002",
+            group_id="30001",
+            raw_message="视频消息",
+            segments=[
+                SimpleNamespace(
+                    segment_type="video",
+                    segment_data=json.dumps(
+                        {"url": "https://example.test/video.mp4", "file": "/tmp/v.mp4"}
+                    ),
+                )
+            ],
+        )
+
+        async def _analyze_video(*args, **kwargs):
+            del args, kwargs
+            return VideoAnalysis(video_type="clip", confidence=0.9)
+
+        async def _persist_analysis(*args, **kwargs):
+            del args, kwargs
+            return None
+
+        monkeypatch.setattr(media_tools, "analyze_video", _analyze_video)
+        monkeypatch.setattr(media_tools, "_persist_analysis", _persist_analysis)
+
+        result = await _media_tool(plugin, "read_video").handler(
+            {"source_msg": message, "user_id": "20002", "chat_id": "30001"},
+            {},
+        )
+
+        assert result.status == "ok"
+        assert quota.video_calls == [("20002", "30001")]
+        assert quota.video_rollbacks == []
 
     asyncio.run(_run())

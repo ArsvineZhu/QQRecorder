@@ -123,8 +123,6 @@ def build_config(raw: dict) -> AgentPluginSettings:
             ),
             max_images_per_message=vision_data.get("max_images_per_message", 3),
             include_in_context=vision_data.get("include_in_context", True),
-            cache_enabled=vision_data.get("cache_enabled", True),
-            cache_ttl_days=vision_data.get("cache_ttl_days", 30),
             prompt_version=vision_data.get("prompt_version", "visual_v1"),
             schema_version=vision_data.get("schema_version", "visual_semantic_json_v1"),
             daily_limit_image_per_user_chat=vision_data.get(

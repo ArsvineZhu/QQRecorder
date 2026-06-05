@@ -109,9 +109,6 @@ vision:
   max_images_per_message: 3              # 单条消息最多分析几张图
   include_in_context: true               # 是否将视觉分析结果注入上下文
 
-  # 缓存
-  cache_enabled: true                    # 是否启用视觉分析结果缓存
-  cache_ttl_days: 30                     # 缓存有效期（天）
   prompt_version: visual_v1              # 视觉提示词版本（缓存键组成部分）
   schema_version: visual_semantic_json_v1  # 视觉 schema 版本（缓存键组成部分）
 

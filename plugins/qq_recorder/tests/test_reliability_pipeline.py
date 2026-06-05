@@ -9,6 +9,7 @@ from sqlalchemy import inspect
 from sqlalchemy.exc import OperationalError
 
 from plugins.qq_recorder.config import build_config
+from plugins.qq_recorder.models import ImageAnalysis
 from plugins.qq_recorder.processors import MessageProcessor
 from plugins.qq_recorder.storage import MessageStorage
 
@@ -30,6 +31,102 @@ class _DummyLogger:
 
     def error(self, *_args, **_kwargs) -> None:
         return None
+
+
+class _RaceState:
+    def __init__(self) -> None:
+        self.select_gate = asyncio.Event()
+        self.first_commit_done = asyncio.Event()
+        self.execute_count = 0
+        self.session_count = 0
+
+
+class _RaceSessionProxy:
+    def __init__(self, inner, session_id: int, state: _RaceState):
+        self._inner = inner
+        self._session_id = session_id
+        self._state = state
+        self._delayed_commit = False
+
+    async def execute(self, *args, **kwargs):
+        result = await self._inner.execute(*args, **kwargs)
+        self._state.execute_count += 1
+        if self._state.execute_count == 1:
+            await self._state.select_gate.wait()
+        elif self._state.execute_count == 2:
+            self._state.select_gate.set()
+        return result
+
+    async def commit(self):
+        if self._session_id == 2 and not self._delayed_commit:
+            self._delayed_commit = True
+            await self._state.first_commit_done.wait()
+        result = await self._inner.commit()
+        if self._session_id == 1 and not self._state.first_commit_done.is_set():
+            self._state.first_commit_done.set()
+        return result
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
+class _RaceSessionContext:
+    def __init__(self, session_factory, state: _RaceState):
+        self._cm = session_factory()
+        self._state = state
+
+    async def __aenter__(self):
+        session = await self._cm.__aenter__()
+        self._state.session_count += 1
+        return _RaceSessionProxy(session, self._state.session_count, self._state)
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return await self._cm.__aexit__(exc_type, exc, tb)
+
+
+async def _count_image_analysis_rows(storage: MessageStorage) -> int:
+    async with storage._session() as session:
+        rows = await session.execute(
+            ImageAnalysis.__table__.select().where(
+                ImageAnalysis.file_unique == "same-file",
+                ImageAnalysis.model_used == "same-model",
+            )
+        )
+        return len(rows.fetchall())
+
+
+async def _run_image_analysis_race(db_path: Path):
+    storage = MessageStorage(str(db_path))
+    await storage.init_db()
+
+    real_session = storage._session
+    state = _RaceState()
+    storage._session = lambda: _RaceSessionContext(real_session, state)
+
+    await asyncio.gather(
+        storage.save_image_analysis(
+            file_unique="same-file",
+            model_used="same-model",
+            analysis_json='{"summary":"first"}',
+            semantic_text="first",
+            confidence=0.1,
+            image_id=1,
+            message_id=10,
+        ),
+        storage.save_image_analysis(
+            file_unique="same-file",
+            model_used="same-model",
+            analysis_json='{"summary":"second"}',
+            semantic_text="second",
+            confidence=0.9,
+            video_id=2,
+        ),
+    )
+
+    row = await storage.get_image_analysis("same-file", "same-model")
+    row_count = await _count_image_analysis_rows(storage)
+    await storage.close()
+    return row, row_count
 
 
 def test_build_config_includes_reliability_defaults():
@@ -316,3 +413,15 @@ def test_message_processor_detects_forward_from_raw_message_when_segment_missing
     assert stored.has_forward is True
     assert len(stored.forward_messages) == 1
     assert stored.forward_messages[0].forward_id == "7646754710926849502"
+
+
+def test_save_image_analysis_recovers_from_concurrent_insert_race(tmp_path: Path):
+    row, row_count = asyncio.run(_run_image_analysis_race(tmp_path / "recorder.db"))
+    assert row_count == 1
+    assert row is not None
+    assert row.analysis_json == '{"summary":"second"}'
+    assert row.semantic_text == "second"
+    assert row.confidence == 0.9
+    assert row.image_id == 1
+    assert row.video_id == 2
+    assert row.message_id == 10

@@ -36,9 +36,9 @@ async def _handle_ban(profile, storage, user_id, group_id, event) -> None:
     muted_until = time.time() + duration_sec
 
     if profile is not None:
-        await profile.upsert_profile(
+        await profile.patch_profile(
             user_id,
-            {"user_id": user_id, "muted_until": muted_until, "muted_group": group_id},
+            {"muted_until": muted_until, "muted_group": group_id},
         )
 
     if storage is not None:
@@ -70,13 +70,11 @@ async def _handle_ban(profile, storage, user_id, group_id, event) -> None:
 
 async def _handle_unban(profile, storage, user_id, group_id) -> None:
     if profile is not None:
-        existing = await profile.get_profile(user_id)
-        if existing:
-            existing.pop("muted_until", None)
-            existing.pop("muted_group", None)
-            await profile.upsert_profile(user_id, existing)
-        else:
-            await profile.upsert_profile(user_id, {"user_id": user_id})
+        await profile.patch_profile(
+            user_id,
+            {},
+            remove_keys=("muted_until", "muted_group"),
+        )
 
     if storage is not None:
         try:

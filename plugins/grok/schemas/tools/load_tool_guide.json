@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tool_name": {
+      "type": "string",
+      "description": "你想查看完整说明的工具名，必须与可用工具名完全一致。"
+    }
+  },
+  "required": [
+    "tool_name"
+  ],
+  "description": "加载某个工具的完整说明，包括用途、适用场景、边界和参数提示。",
+  "x-prompt": {
+    "summary": "加载某个工具的完整说明",
+    "usage": [
+      "当你准备使用某个工具，但不确定它的用法、边界或参数习惯时调用",
+      "必须传入准确的 tool_name"
+    ],
+    "guidance": [
+      "先看工具用途摘要，再按需加载完整说明",
+      "如果你已经很确定怎么用，就不必每次都调用它"
+    ],
+    "boundaries": [
+      "它只返回工具说明，不会替你执行该工具",
+      "tool_name 必须与可用工具名完全一致，写错会失败"
+    ]
+  }
+}

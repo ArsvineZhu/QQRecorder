@@ -143,7 +143,6 @@ When `read_picture` or `read_video` analyze content, results are written to both
 
 | Store | Table | TTL | Purpose |
 |-------|-------|-----|---------|
-| `VisionCacheStore` | `vision_cache` | `cache_ttl_days` | Fast lookup, avoid re-API |
 | `MessageStorage` | `image_analyses` | Permanent | Per-user recall, system notices |
 
 Ban/unban events are also written as `media_type="system_notice"` entries in `image_analyses`.

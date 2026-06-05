@@ -21,13 +21,19 @@ class CooldownTracker:
         keys_with_delay: list[tuple[str, float]] = []
         if str(getattr(source_msg, "chat_type", "")) == "group":
             chat_id = str(getattr(source_msg, "group_id", "") or "")
-            keys_with_delay.append((f"group-chat:{chat_id}", 2.0))
+            keys_with_delay.append((f"group-chat:{chat_id}", 1.0))  # 群聊整体冷却
             keys_with_delay.append(
-                (f"group-user:{chat_id}:{getattr(source_msg, 'user_id', '')}", 5.0)
+                (
+                    f"group-user:{chat_id}:{getattr(source_msg, 'user_id', '')}",
+                    2.0,
+                )  # 群聊中单用户冷却
             )
         else:
             keys_with_delay.append(
-                (f"private-user:{getattr(source_msg, 'user_id', '')}", 1.0)
+                (
+                    f"private-user:{getattr(source_msg, 'user_id', '')}",
+                    1.0,
+                )  # 私聊用户冷却
             )
 
         if any(now < self._next_allowed_at.get(key, 0.0) for key, _ in keys_with_delay):
