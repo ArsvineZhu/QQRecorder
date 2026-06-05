@@ -19,6 +19,8 @@ class AgentTurnResult:
     model_name: str = ""
     request_summary: str = ""
     response_summary: str = ""
+    raw_assistant_message: dict | None = None
+    messages: list[dict] | None = None
 
 
 async def run_agent_turn(
@@ -27,10 +29,15 @@ async def run_agent_turn(
     working_context,
     settings,
     registry,
+    messages: list[dict] | None = None,
 ) -> AgentTurnResult:
     tool_defs = registry.list_for_model()
     working_context_text = render_working_context(working_context)
-    messages = build_model_messages(working_context, settings)
+    if messages is None:
+        messages = build_model_messages(working_context, settings)
+    else:
+        # Update budget info in the existing history for the next turn
+        _update_budget_in_user_message(messages, working_context)
     kwargs = {
         "model": settings.model.model or None,
         "temperature": settings.model.temperature,
@@ -63,10 +70,31 @@ async def run_agent_turn(
 
     tool_calls = _extract_tool_calls(response)
     text = _extract_text(response).strip()
+    raw_msg = _extract_raw_assistant_message(response)
 
     if tool_calls:
         tools_log = "; ".join(f"{c.name}({c.arguments})" for c in tool_calls)
         logger.info("model: tool calls %s", tools_log)
+    elif not text:
+        # Debug: log full response structure when content is empty
+        choices = getattr(response, "choices", None) or []
+        if choices:
+            msg = getattr(choices[0], "message", None)
+            logger.info(
+                "model: empty text — response choices[0].message "
+                "content=%s reasoning_content=%s tool_calls=%s finish_reason=%s",
+                repr(getattr(msg, "content", "MISSING")),
+                repr(getattr(msg, "reasoning_content", "MISSING")),
+                repr(getattr(msg, "tool_calls", "MISSING")),
+                repr(getattr(choices[0], "finish_reason", "MISSING")),
+            )
+        else:
+            logger.info(
+                "model: empty text — response type=%s has_choices=%s raw=%s",
+                type(response).__name__,
+                bool(choices),
+                str(type(response)),
+            )
     else:
         logger.info("model: text response len=%d text=%s", len(text), text[:120])
 
@@ -82,13 +110,17 @@ async def run_agent_turn(
         model_name=str(getattr(response, "model", None) or settings.model.model or ""),
         request_summary=_summarize(working_context_text, settings.trace.preview_chars),
         response_summary=_summarize(response_summary, settings.trace.preview_chars),
+        raw_assistant_message=raw_msg,
+        messages=messages,
     )
 
 
 async def _call_chat(api, messages, *, kwargs: dict, **extra):
     timeout_sec = float(kwargs.pop("timeout_sec", 30) or 30)
     async with asyncio.timeout(timeout_sec):
-        return await api.ai.chat(messages, **kwargs, **extra)
+        response = await api.ai.chat(messages, **kwargs, **extra)
+    logger.debug("model: _call_chat response type=%s", type(response).__name__)
+    return response
 
 
 def _extract_tool_calls(response) -> list[AgentToolCall]:
@@ -115,7 +147,10 @@ def _extract_tool_calls(response) -> list[AgentToolCall]:
             payload = arguments or {}
         if not isinstance(payload, dict):
             payload = {}
-        calls.append(AgentToolCall(name=name, arguments=payload))
+        tool_call_id = str(getattr(tool_call, "id", "") or "")
+        calls.append(
+            AgentToolCall(name=name, arguments=payload, tool_call_id=tool_call_id)
+        )
     return calls
 
 
@@ -125,13 +160,58 @@ def _extract_text(response) -> str:
     choices = getattr(response, "choices", None) or []
     if choices:
         message = getattr(choices[0], "message", None)
-        if message is not None and getattr(message, "content", None) is not None:
-            return str(message.content)
+        if message is not None:
+            content = getattr(message, "content", None)
+            if content:  # truthy — not None and not ""
+                return str(content)
+            # content is None or "" — e.g. thinking mode, finish_reason="length"
+            # Don't return reasoning_content (internal thinking), let caller handle
         if getattr(choices[0], "text", None):
             return str(choices[0].text)
     if getattr(response, "content", None):
         return str(response.content)
     return ""
+
+
+def _extract_raw_assistant_message(response) -> dict | None:
+    """Extract the raw assistant message dict from a non-streaming response.
+
+    Returns a dict with keys like role, content, reasoning_content, tool_calls
+    suitable for appending to the messages list per DeepSeek docs.
+    """
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return None
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        return None
+    result: dict = {"role": "assistant"}
+    content = getattr(message, "content", None)
+    if content is not None:
+        result["content"] = content
+    rc = getattr(message, "reasoning_content", None)
+    if rc is not None:
+        result["reasoning_content"] = rc
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls is not None:
+        result["tool_calls"] = [_serialize_tool_call(tc) for tc in tool_calls]
+    return result
+
+
+def _serialize_tool_call(tc) -> dict:
+    """Serialize a tool call object to a dict suitable for API re-submission."""
+    if hasattr(tc, "model_dump"):
+        return tc.model_dump()
+    base: dict[str, object] = {
+        "id": str(getattr(tc, "id", "") or ""),
+        "type": "function",
+    }
+    func = getattr(tc, "function", None) or {}
+    base["function"] = {
+        "name": str(getattr(func, "name", "") or ""),
+        "arguments": str(getattr(func, "arguments", "") or ""),
+    }
+    return base
 
 
 def _iter_tool_calls(response):
@@ -181,6 +261,26 @@ def _build_thinking_kwargs(model_cfg) -> dict:
     }
 
 
+def _update_budget_in_user_message(
+    messages: list[dict],
+    working_context,
+) -> None:
+    """Update tool_call_budget_remaining in the last user message."""
+    remaining = int(getattr(working_context, "tool_call_budget_remaining", 0) or 0)
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                import re
+
+                msg["content"] = re.sub(
+                    r"当前剩余额度：`\d+`",
+                    f"当前剩余额度：`{remaining}`",
+                    content,
+                )
+            break
+
+
 def _log_llm_chain(working_context, messages, tool_calls, text, settings) -> None:
     """Log the full LLM input/output chain when log_llm_chain is enabled.
 
@@ -191,7 +291,6 @@ def _log_llm_chain(working_context, messages, tool_calls, text, settings) -> Non
 
     chain_logger = logging.getLogger("grok.llm_chain")
     chain_logger.setLevel(logging.INFO)
-    # Ensure messages propagate to the root handler
     if not chain_logger.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(
@@ -201,18 +300,16 @@ def _log_llm_chain(working_context, messages, tool_calls, text, settings) -> Non
             )
         )
         chain_logger.addHandler(handler)
-    chain_logger.propagate = True
+    chain_logger.propagate = False
 
     # User message (skip system prompt at index 0)
     user_msg = messages[1] if len(messages) > 1 else messages[-1]
     user_content = str(user_msg.get("content", "") or "")
-    chain_logger.info("=" * 70)
     chain_logger.info("--- USER MESSAGE ---")
     chain_logger.info("%s", pprint.pformat(user_content, width=120, compact=False))
 
     # Tool calls
     if tool_calls:
-        chain_logger.info("-" * 70)
         chain_logger.info("--- MODEL TOOL CALLS ---")
         for tc in tool_calls:
             chain_logger.info("  TOOL: %s", tc.name)
@@ -225,14 +322,12 @@ def _log_llm_chain(working_context, messages, tool_calls, text, settings) -> Non
     # Tool results (evidence appended after previous round)
     evidence = getattr(working_context, "evidence", None) or []
     if evidence:
-        chain_logger.info("-" * 70)
         chain_logger.info("--- TOOL RESULTS ---")
         for block in evidence:
             _log_block(chain_logger, block)
 
     # Model response text
     if text:
-        chain_logger.info("-" * 70)
         chain_logger.info("--- MODEL RESPONSE ---")
         chain_logger.info("%s", pprint.pformat(text, width=120, compact=False))
 

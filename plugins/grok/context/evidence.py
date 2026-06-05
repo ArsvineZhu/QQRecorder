@@ -40,6 +40,7 @@ class AgentWorkingContext:
 class AgentToolCall:
     name: str
     arguments: dict[str, Any]
+    tool_call_id: str = ""
 
 
 @dataclass

@@ -27,6 +27,108 @@ from .models import (
 T = TypeVar("T")
 
 
+async def _add_segments(session, message_id: int, segments: list[dict]) -> None:
+    for seg in segments:
+        session.add(
+            MessageSegment(
+                message_id=message_id,
+                segment_type=seg["segment_type"],
+                segment_order=seg["segment_order"],
+                segment_data=seg["segment_data"],
+            )
+        )
+
+
+async def _add_images(session, message_id: int, images: list[dict]) -> None:
+    for img in images:
+        session.add(
+            Image(
+                message_id=message_id,
+                file_url=img.get("file_url"),
+                file_unique=img.get("file_unique"),
+                file_size=img.get("file_size"),
+                local_path=img.get("local_path"),
+                width=img.get("width"),
+                height=img.get("height"),
+                downloaded=img.get("downloaded", False),
+            )
+        )
+
+
+async def _add_videos(session, message_id: int, videos: list[dict]) -> None:
+    for video in videos:
+        session.add(
+            Video(
+                message_id=message_id,
+                file_url=video.get("file_url"),
+                file_unique=video.get("file_unique"),
+                file_size=video.get("file_size"),
+                local_path=video.get("local_path"),
+                duration_sec=video.get("duration_sec"),
+                downloaded=video.get("downloaded", False),
+                title=video.get("title", ""),
+                intro=video.get("intro", ""),
+            )
+        )
+
+
+async def _add_replies(session, message_id: int, replies: list[dict]) -> None:
+    for reply in replies:
+        session.add(
+            Reply(
+                message_id=message_id,
+                reply_to_message_id=reply["reply_to_message_id"],
+            )
+        )
+
+
+async def _add_forward_messages(
+    session,
+    message_id: int,
+    forwards: list[dict],
+    parent_id: int | None = None,
+) -> None:
+    for forward_data in forwards:
+        forward = ForwardMessage(
+            message_id=message_id,
+            parent_forward_id=parent_id,
+            user_id=forward_data.get("user_id"),
+            nickname=forward_data.get("nickname"),
+            depth=forward_data.get("depth", 0),
+            content_summary=forward_data.get("content_summary"),
+            forward_id=forward_data.get("forward_id"),
+        )
+        session.add(forward)
+        await session.flush()
+        children = forward_data.get("children", [])
+        if children:
+            await _add_forward_messages(
+                session, message_id, children, parent_id=forward.id
+            )
+
+
+async def _add_at_mentions(session, message_id: int, mentions: list[dict]) -> None:
+    for at in mentions:
+        session.add(
+            AtMention(message_id=message_id, target_user_id=at["target_user_id"])
+        )
+
+
+async def _add_app_shares(session, message_id: int, shares: list[dict]) -> None:
+    for share in shares:
+        session.add(
+            AppShare(
+                message_id=message_id,
+                app_name=share.get("app_name", ""),
+                title=share.get("title", ""),
+                description=share.get("description", ""),
+                url=share.get("url", ""),
+                prompt=share.get("prompt", ""),
+                raw_data=share.get("raw_data", ""),
+            )
+        )
+
+
 class MessageStorage:
     def __init__(
         self,
@@ -103,105 +205,6 @@ class MessageStorage:
                     )
                 await asyncio.sleep(delay_ms / 1000)
         raise RuntimeError(f"unreachable lock retry path for {op_name}")
-
-
-async def _add_segments(session, message_id: int, segments: list[dict]) -> None:
-    for seg in segments:
-        session.add(
-            MessageSegment(
-                message_id=message_id,
-                segment_type=seg["segment_type"],
-                segment_order=seg["segment_order"],
-                segment_data=seg["segment_data"],
-            )
-        )
-
-
-async def _add_images(session, message_id: int, images: list[dict]) -> None:
-    for img in images:
-        session.add(
-            Image(
-                message_id=message_id,
-                file_url=img.get("file_url"),
-                file_unique=img.get("file_unique"),
-                file_size=img.get("file_size"),
-                local_path=img.get("local_path"),
-                width=img.get("width"),
-                height=img.get("height"),
-                downloaded=img.get("downloaded", False),
-            )
-        )
-
-
-async def _add_videos(session, message_id: int, videos: list[dict]) -> None:
-    for video in videos:
-        session.add(
-            Video(
-                message_id=message_id,
-                file_url=video.get("file_url"),
-                file_unique=video.get("file_unique"),
-                file_size=video.get("file_size"),
-                local_path=video.get("local_path"),
-                duration_sec=video.get("duration_sec"),
-                downloaded=video.get("downloaded", False),
-                title=video.get("title", ""),
-                intro=video.get("intro", ""),
-            )
-        )
-
-
-async def _add_replies(session, message_id: int, replies: list[dict]) -> None:
-    for reply in replies:
-        session.add(
-            Reply(
-                message_id=message_id,
-                reply_to_message_id=reply["reply_to_message_id"],
-            )
-        )
-
-
-async def _add_forward_messages(
-    session, message_id: int, forwards: list[dict], parent_id: int | None = None
-) -> None:
-    for forward_data in forwards:
-        forward = ForwardMessage(
-            message_id=message_id,
-            parent_forward_id=parent_id,
-            user_id=forward_data.get("user_id"),
-            nickname=forward_data.get("nickname"),
-            depth=forward_data.get("depth", 0),
-            content_summary=forward_data.get("content_summary"),
-            forward_id=forward_data.get("forward_id"),
-        )
-        session.add(forward)
-        await session.flush()
-        children = forward_data.get("children", [])
-        if children:
-            await _add_forward_messages(
-                session, message_id, children, parent_id=forward.id
-            )
-
-
-async def _add_at_mentions(session, message_id: int, mentions: list[dict]) -> None:
-    for at in mentions:
-        session.add(
-            AtMention(message_id=message_id, target_user_id=at["target_user_id"])
-        )
-
-
-async def _add_app_shares(session, message_id: int, shares: list[dict]) -> None:  # noqa: C901
-    for share in shares:
-        session.add(
-            AppShare(
-                message_id=message_id,
-                app_name=share.get("app_name", ""),
-                title=share.get("title", ""),
-                description=share.get("description", ""),
-                url=share.get("url", ""),
-                prompt=share.get("prompt", ""),
-                raw_data=share.get("raw_data", ""),
-            )
-        )
 
     async def save_message(self, message_data: dict) -> int:
         async def _save_once() -> int:

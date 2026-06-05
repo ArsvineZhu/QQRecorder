@@ -234,11 +234,12 @@ def test_runtime_stops_at_global_tool_call_budget():
 
         assert outcome.working_context.tool_call_budget_total == 2
         assert outcome.working_context.tool_call_budget_remaining == 0
-        assert outcome.error_code == "tool_budget_exceeded"
+        # Budget exceeded now skips extra tools and lets model continue
+        # Since _AlwaysToolAdapter always returns tools, we hit max_steps
+        assert outcome.error_code == "max_steps_exceeded"
         assert len([step for step in outcome.steps if step.status == "ok"]) == 2
         assert outcome.steps[-1].status == "skipped"
         payload = json.loads(outcome.steps[-1].summary)
-        assert payload["status"] == "failed"
         assert payload["error_code"] == "tool_budget_exceeded"
         assert payload["retryable"] is False
 

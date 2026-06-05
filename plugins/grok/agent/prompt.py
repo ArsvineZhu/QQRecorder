@@ -31,7 +31,14 @@ def render_system_prompt(settings, *, values: dict[str, str]) -> str:
     return rendered
 
 
-def build_model_messages(working_context, settings) -> list[dict[str, str]]:
+def build_model_messages(
+    working_context,
+    settings,
+    *,
+    existing_messages: list[dict] | None = None,
+) -> list[dict[str, str]]:
+    if existing_messages is not None:
+        return existing_messages
     system = render_system_prompt(
         settings,
         values={
@@ -542,6 +549,9 @@ def _add_roster_entry(
     clean_id = user_id.strip()
     clean_name = display_name.strip()
     if not clean_id or not clean_name:
+        return
+    # Skip entries where display name is just the numeric QQ ID (useless)
+    if clean_name == clean_id:
         return
     id_to_name.setdefault(clean_id, clean_name)
     name_to_id.setdefault(clean_name, clean_id)

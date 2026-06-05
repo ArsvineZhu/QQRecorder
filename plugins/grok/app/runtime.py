@@ -38,8 +38,9 @@ class AgentRuntime:
         self.plugin = plugin
         self.registry = registry or self._build_registry(plugin)
         self._model_runner = model_runner or self._run_model
+        self._messages_history: list[dict] | None = None
 
-    async def run(self, *, event, source_msg, trigger_reason: str) -> AgentOutcome:
+    async def run(self, *, event, source_msg, trigger_reason: str) -> AgentOutcome:  # noqa: C901
         working_context = AgentWorkingContext(
             context=ContextBundle(
                 chat_type=str(
@@ -94,6 +95,7 @@ class AgentRuntime:
         total_tool_calls = 0
         max_tool_calls_total = working_context.tool_call_budget_total
         seen_track_reply_keys: set[tuple[str, int]] = set()
+        self._messages_history = None
 
         for _ in range(working_context.step_budget):
             turn = await self._model_runner(
@@ -102,6 +104,19 @@ class AgentRuntime:
                 registry=self.registry,
                 api=self.plugin.api,
             )
+
+            # First call returns the initial messages; subsequent calls reuse history
+            if self._messages_history is None:
+                msgs = getattr(turn, "messages", None)
+                if msgs is not None:
+                    self._messages_history = msgs
+
+            # Append assistant response to history (preserves content,
+            # reasoning_content, tool_calls for DeepSeek thinking mode)
+            raw_msg = getattr(turn, "raw_assistant_message", None)
+            if raw_msg is not None and self._messages_history is not None:
+                self._messages_history.append(raw_msg)
+
             if not turn.tool_calls:
                 text = turn.text.strip()
                 if not text:
@@ -125,9 +140,6 @@ class AgentRuntime:
                     summary="",
                 )
                 if total_tool_calls >= max_tool_calls_total:
-                    working_context.tool_call_budget_remaining = max(
-                        0, max_tool_calls_total - total_tool_calls
-                    )
                     budget_response = ToolResponse(
                         status="failed",
                         data={},
@@ -149,18 +161,22 @@ class AgentRuntime:
                             metadata={"arguments": tool_call.arguments},
                         )
                     )
+                    if self._messages_history is not None:
+                        self._messages_history.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.tool_call_id,
+                                "content": step.summary,
+                            }
+                        )
                     logger.info(
                         "runtime: global tool budget exceeded budget=%d tool=%s",
                         max_tool_calls_total,
                         tool_call.name,
                     )
-                    return AgentOutcome(
-                        text="上下文工具查询次数已经达到上限，查询异常",
-                        working_context=working_context,
-                        steps=steps,
-                        model_name=getattr(turn, "model_name", "") or "",
-                        error_code="tool_budget_exceeded",
-                    )
+                    # Don't return — skip the tool, let the model continue
+                    # with the context it already has
+                    continue
 
                 duplicate_response = _check_duplicate_track_reply(
                     tool_call=tool_call,
@@ -168,10 +184,6 @@ class AgentRuntime:
                     seen_track_reply_keys=seen_track_reply_keys,
                 )
                 if duplicate_response is not None:
-                    total_tool_calls += 1
-                    working_context.tool_call_budget_remaining = max(
-                        0, max_tool_calls_total - total_tool_calls
-                    )
                     step.status = "skipped"
                     step.summary = _normalize_result_payload(
                         duplicate_response,
@@ -192,6 +204,14 @@ class AgentRuntime:
                             metadata={"arguments": tool_call.arguments},
                         )
                     )
+                    if self._messages_history is not None:
+                        self._messages_history.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.tool_call_id,
+                                "content": step.summary,
+                            }
+                        )
                     logger.info(
                         "runtime: duplicate track_reply skipped args=%s",
                         tool_call.arguments,
@@ -261,6 +281,16 @@ class AgentRuntime:
                     )
                 steps.append(step)
 
+                # Append tool result to self._messages_history for next API call
+                if self._messages_history is not None:
+                    self._messages_history.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.tool_call_id,
+                            "content": step.summary,
+                        }
+                    )
+
         return AgentOutcome(
             text=(
                 f"Agent 运行达到最大步数，{_assistant_name(self.plugin.settings)}."
@@ -272,13 +302,23 @@ class AgentRuntime:
             error_code="max_steps_exceeded",
         )
 
-    async def _run_model(self, *, working_context, settings, registry, api):
+    async def _run_model(
+        self, *, working_context, settings, registry, api, messages=None
+    ):
         return await run_agent_turn(
             api=api,
             working_context=working_context,
             settings=settings,
             registry=registry,
+            messages=messages,
         )
+
+    @staticmethod
+    def _merge_history(
+        messages_history: list[dict] | None,
+    ) -> list[dict] | None:
+        """Pass message history for the next API call, or None for the first turn."""
+        return messages_history
 
     @staticmethod
     def _build_registry(plugin) -> ToolRegistry:
