@@ -9,6 +9,30 @@ from plugins.grok.context.evidence import AgentToolCall
 from plugins.grok.tools.registry import ToolResponse
 
 
+def _plugin_settings(
+    *,
+    max_steps,
+    max_tool_calls_per_turn,
+    max_evidence_chars,
+    max_tool_calls_total=None,
+):
+    agent = SimpleNamespace(
+        max_steps=max_steps,
+        max_tool_calls_per_turn=max_tool_calls_per_turn,
+        max_evidence_chars=max_evidence_chars,
+    )
+    if max_tool_calls_total is not None:
+        agent.max_tool_calls_total = max_tool_calls_total
+    return SimpleNamespace(
+        agent=agent,
+        prompt=SimpleNamespace(
+            assistant_name="Grok",
+            system_template_path="prompt/system.md",
+            context_message_preview_chars=280,
+        ),
+    )
+
+
 class _LargePayloadRegistry:
     def list_for_model(self):
         return []
@@ -72,12 +96,10 @@ class _SingleToolAdapter:
 def test_runtime_clips_large_evidence_payload_to_budget():
     async def _run():
         plugin = SimpleNamespace(
-            settings=SimpleNamespace(
-                agent=SimpleNamespace(
-                    max_steps=3,
-                    max_tool_calls_per_turn=1,
-                    max_evidence_chars=120,
-                )
+            settings=_plugin_settings(
+                max_steps=3,
+                max_tool_calls_per_turn=1,
+                max_evidence_chars=120,
             ),
             api=SimpleNamespace(ai=object()),
         )
@@ -121,12 +143,10 @@ def test_runtime_clips_large_evidence_payload_to_budget():
 def test_runtime_keeps_load_context_payload_as_valid_json_for_prompt_rendering():
     async def _run():
         plugin = SimpleNamespace(
-            settings=SimpleNamespace(
-                agent=SimpleNamespace(
-                    max_steps=3,
-                    max_tool_calls_per_turn=1,
-                    max_evidence_chars=260,
-                )
+            settings=_plugin_settings(
+                max_steps=3,
+                max_tool_calls_per_turn=1,
+                max_evidence_chars=260,
             ),
             api=SimpleNamespace(ai=object()),
         )
@@ -227,13 +247,11 @@ class _SequencedToolAdapter:
 def test_runtime_stops_at_global_tool_call_budget():
     async def _run():
         plugin = SimpleNamespace(
-            settings=SimpleNamespace(
-                agent=SimpleNamespace(
-                    max_steps=4,
-                    max_tool_calls_per_turn=1,
-                    max_tool_calls_total=2,
-                    max_evidence_chars=120,
-                )
+            settings=_plugin_settings(
+                max_steps=4,
+                max_tool_calls_per_turn=1,
+                max_tool_calls_total=2,
+                max_evidence_chars=120,
             ),
             api=SimpleNamespace(ai=object()),
         )
@@ -241,7 +259,30 @@ def test_runtime_stops_at_global_tool_call_budget():
         runtime = AgentRuntime(
             plugin,
             registry=registry,
-            model_runner=_AlwaysToolAdapter().run,
+            model_runner=_SequencedToolAdapter(
+                [
+                    {
+                        "kind": "tool",
+                        "name": "load_context",
+                        "arguments": {"limit": 10},
+                    },
+                    {
+                        "kind": "tool",
+                        "name": "load_context",
+                        "arguments": {"limit": 11},
+                    },
+                    {
+                        "kind": "tool",
+                        "name": "load_context",
+                        "arguments": {"limit": 12},
+                    },
+                    {
+                        "kind": "tool",
+                        "name": "load_context",
+                        "arguments": {"limit": 13},
+                    },
+                ]
+            ).run,
         )
         source_msg = SimpleNamespace(
             chat_type="group",
@@ -280,13 +321,11 @@ def test_runtime_stops_at_global_tool_call_budget():
 def test_runtime_skips_duplicate_track_reply_and_continues():
     async def _run():
         plugin = SimpleNamespace(
-            settings=SimpleNamespace(
-                agent=SimpleNamespace(
-                    max_steps=4,
-                    max_tool_calls_per_turn=1,
-                    max_tool_calls_total=6,
-                    max_evidence_chars=120,
-                )
+            settings=_plugin_settings(
+                max_steps=4,
+                max_tool_calls_per_turn=1,
+                max_tool_calls_total=6,
+                max_evidence_chars=120,
             ),
             api=SimpleNamespace(ai=object()),
         )
@@ -333,13 +372,11 @@ def test_runtime_skips_duplicate_track_reply_and_continues():
 def test_runtime_does_not_charge_budget_for_load_tool_guide():
     async def _run():
         plugin = SimpleNamespace(
-            settings=SimpleNamespace(
-                agent=SimpleNamespace(
-                    max_steps=4,
-                    max_tool_calls_per_turn=1,
-                    max_tool_calls_total=1,
-                    max_evidence_chars=120,
-                )
+            settings=_plugin_settings(
+                max_steps=4,
+                max_tool_calls_per_turn=1,
+                max_tool_calls_total=1,
+                max_evidence_chars=120,
             ),
             api=SimpleNamespace(ai=object()),
         )
@@ -405,13 +442,11 @@ def test_runtime_does_not_charge_budget_for_load_tool_guide():
 def test_runtime_allows_load_tool_guide_reuse_with_different_arguments():
     async def _run():
         plugin = SimpleNamespace(
-            settings=SimpleNamespace(
-                agent=SimpleNamespace(
-                    max_steps=4,
-                    max_tool_calls_per_turn=1,
-                    max_tool_calls_total=1,
-                    max_evidence_chars=120,
-                )
+            settings=_plugin_settings(
+                max_steps=4,
+                max_tool_calls_per_turn=1,
+                max_tool_calls_total=1,
+                max_evidence_chars=120,
             ),
             api=SimpleNamespace(ai=object()),
         )

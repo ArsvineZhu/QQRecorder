@@ -36,6 +36,19 @@ class AgentReplyTrace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
 
+class AgentConversationSession(Base):
+    __tablename__ = "agent_conversation_sessions"
+
+    chat_type: Mapped[str] = mapped_column(String, primary_key=True)
+    chat_id: Mapped[str] = mapped_column(String, primary_key=True)
+    messages_json: Mapped[str] = mapped_column(Text, default="[]")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class AgentProfileSnapshot(Base):
     __tablename__ = "agent_profile_snapshots"
 

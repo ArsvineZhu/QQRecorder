@@ -7,6 +7,7 @@ import time
 
 from ..delivery import SendOutcome, send_reply
 from ..profile_defaults import build_default_profile
+from ..shared.conversation_history import to_persisted_transcript
 from ..trigger import final_decision, prefilter_event
 
 logger = logging.getLogger("grok.orchestrator")
@@ -131,6 +132,26 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
     if outcome.text:
         send_outcome = await send_reply(
             plugin.api, event, outcome.text, plugin.settings
+        )
+
+    conversation_store = getattr(plugin, "_conversation_store", None)
+    if (
+        conversation_store is not None
+        and send_outcome.sent
+        and outcome.text
+        and outcome.messages_history
+    ):
+        agent_settings = getattr(plugin.settings, "agent", None)
+        await conversation_store.upsert_session(
+            str(getattr(source_msg, "chat_type", "") or ""),
+            chat_id_str,
+            to_persisted_transcript(
+                outcome.messages_history,
+                max_messages=int(
+                    getattr(agent_settings, "conversation_history_max_messages", 20)
+                    or 20
+                ),
+            ),
         )
 
     await trace_store.finish_trace(

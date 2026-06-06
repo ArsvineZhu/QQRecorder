@@ -59,3 +59,4 @@ class AgentOutcome:
     model_name: str = ""
     error_code: str | None = None
     termination_reason: str | None = None
+    messages_history: list[dict[str, Any]] | None = None

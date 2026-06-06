@@ -8,7 +8,12 @@ from ncatbot.plugin import NcatBotPlugin
 
 from .app import AgentRuntime, handle_event, handle_group_ban
 from .config import AgentPluginSettings, build_config
-from .infra import AgentTraceStore, ProfileJsonStore, RecorderBridge
+from .infra import (
+    AgentConversationSessionStore,
+    AgentTraceStore,
+    ProfileJsonStore,
+    RecorderBridge,
+)
 from .trigger import CooldownTracker
 from .vision.client import create_dashscope_client
 from .vision.quota import VisionQuotaTracker
@@ -32,6 +37,7 @@ class GrokPlugin(NcatBotPlugin):
         self._vision_client: OpenAI | None = None
         self._vision_quota: VisionQuotaTracker | None = None
         self._profile_json_store: ProfileJsonStore | None = None
+        self._conversation_store: AgentConversationSessionStore | None = None
         self._runtime: AgentRuntime | None = None
 
     async def on_load(self) -> None:
@@ -48,6 +54,10 @@ class GrokPlugin(NcatBotPlugin):
         await self._bridge.connect_existing(self.settings.recorder_db)
         self._trace_store = AgentTraceStore(self.settings.recorder_db)
         await self._trace_store.init_db()
+        self._conversation_store = AgentConversationSessionStore(
+            self.settings.recorder_db
+        )
+        await self._conversation_store.init_db()
         profile_db_path = self.settings.profile.db_path
         if profile_db_path and not os.path.isabs(profile_db_path):
             profile_db_path = str(self.workspace / profile_db_path)
@@ -81,11 +91,14 @@ class GrokPlugin(NcatBotPlugin):
             await self._bridge.close()
         if self._trace_store is not None:
             await self._trace_store.close()
+        if self._conversation_store is not None:
+            await self._conversation_store.close()
         if self._profile_json_store is not None:
             await self._profile_json_store.close()
         self._vision_client = None
         self._vision_quota = None
         self._profile_json_store = None
+        self._conversation_store = None
         self._runtime = None
         self.logger.info("grok unloaded")
 

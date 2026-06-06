@@ -56,6 +56,9 @@ def build_config(raw: dict) -> AgentPluginSettings:
             max_tool_calls_per_turn=agent_data.get("max_tool_calls_per_turn", 3),
             max_tool_calls_total=agent_data.get("max_tool_calls_total", 6),
             max_evidence_chars=agent_data.get("max_evidence_chars", 6000),
+            conversation_history_max_messages=agent_data.get(
+                "conversation_history_max_messages", 20
+            ),
         ),
         prompt=PromptConfig(
             assistant_name=str(prompt_data.get("assistant_name", "Grok") or ""),
