@@ -34,6 +34,10 @@ class AgentWorkingContext:
     step_budget: int = 4
     tool_call_budget_total: int = 0
     tool_call_budget_remaining: int = 0
+    replay_message_ids: set[str] = field(default_factory=set)
+    llm_request_id: str = ""
+    llm_step: int = 0
+    source_message_id: str = ""
 
 
 @dataclass
@@ -60,3 +64,5 @@ class AgentOutcome:
     error_code: str | None = None
     termination_reason: str | None = None
     messages_history: list[dict[str, Any]] | None = None
+    transcript_turns: list[dict[str, Any]] | None = None
+    diagnostics: list[dict[str, Any]] = field(default_factory=list)

@@ -1,0 +1,87 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "user_id": {
+      "type": "string",
+      "description": "只查某个用户发过的消息。"
+    },
+    "chat_type": {
+      "type": "string",
+      "enum": ["group", "private"],
+      "description": "限定检索范围是群聊还是私聊。"
+    },
+    "chat_id": {
+      "type": "string",
+      "description": "限定具体会话 ID。传 chat_id 时必须同时传 chat_type。"
+    },
+    "keyword": {
+      "type": "string",
+      "description": "按关键词搜索消息内容。"
+    },
+    "time_from": {
+      "type": "string",
+      "description": "起始时间，支持 YYYY-MM-DD HH:MM:SS 或 ISO-8601。"
+    },
+    "time_to": {
+      "type": "string",
+      "description": "结束时间，支持 YYYY-MM-DD HH:MM:SS 或 ISO-8601。"
+    },
+    "has_forward": {
+      "type": "boolean",
+      "description": "是否只看带合并转发的消息。"
+    },
+    "has_image": {
+      "type": "boolean",
+      "description": "是否只看带图片的消息。"
+    },
+    "has_reply": {
+      "type": "boolean",
+      "description": "是否只看带回复引用的消息。"
+    },
+    "has_video": {
+      "type": "boolean",
+      "description": "是否只看带视频的消息。"
+    },
+    "has_at": {
+      "type": "boolean",
+      "description": "是否只看带 @ 提及的消息。"
+    },
+    "has_app_share": {
+      "type": "boolean",
+      "description": "是否只看应用卡片/分享消息。"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "最多返回多少条消息。"
+    },
+    "order": {
+      "type": "string",
+      "enum": ["asc", "desc"],
+      "description": "按时间升序或降序返回。"
+    }
+  },
+  "required": [],
+  "description": "按人、会话、时间、关键词和消息特征查询历史聊天记录。默认在当前会话内检索，并返回 message_id 方便后续调用 load_message、extract_forward 或 load_context(anchor=message_id)。",
+  "x-prompt": {
+    "summary": "按条件查询历史聊天记录",
+    "usage": [
+      "当你需要查某个人之前说过什么，或找一段时间内出现过哪些相关消息时调用",
+      "如果只是想看当前消息附近的上下文，优先改用 load_context"
+    ],
+    "guidance": [
+      "至少加一个明确筛选条件，例如 user_id、keyword、时间范围或消息特征",
+      "默认就在当前会话里查；只有要跳到别的群或私聊时再显式传 chat_type 和 chat_id"
+    ],
+    "boundaries": [
+      "不要把它当成无条件扫库工具",
+      "传 chat_id 时必须同时传 chat_type",
+      "查到目标 message_id 后，如果需要细读长消息或展开转发，再配合 load_message / extract_forward"
+    ]
+  },
+  "x-tool-meta": {
+    "full_exposure": false,
+    "counts_against_budget": true,
+    "same_arguments_limit": "per_agent_run"
+  }
+}

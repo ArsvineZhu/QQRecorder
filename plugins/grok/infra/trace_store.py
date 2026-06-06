@@ -10,6 +10,7 @@ _TRACE_COLUMNS = {
     "context_version": "VARCHAR DEFAULT 'v1'",
     "profile_version": "VARCHAR DEFAULT 'v1'",
     "working_context_json": "TEXT DEFAULT '{}'",
+    "diagnostics_json": "TEXT DEFAULT '[]'",
 }
 
 
@@ -46,6 +47,7 @@ class AgentTraceStore:
         context_version: str = "v1",
         profile_version: str = "v1",
         working_context_json: str = "{}",
+        diagnostics_json: str = "[]",
     ) -> int:
         async with self._session() as session:
             trace = AgentReplyTrace(
@@ -59,6 +61,7 @@ class AgentTraceStore:
                 context_version=context_version,
                 profile_version=profile_version,
                 working_context_json=working_context_json,
+                diagnostics_json=diagnostics_json,
             )
             session.add(trace)
             await session.commit()
@@ -103,6 +106,7 @@ class AgentTraceStore:
         sent_message_id: str | None,
         sent_parts: int,
         latency_ms: int,
+        diagnostics_json: str = "[]",
     ) -> None:
         async with self._session() as session:
             trace = await session.get(AgentReplyTrace, trace_id)
@@ -114,6 +118,7 @@ class AgentTraceStore:
             trace.sent_message_id = sent_message_id
             trace.sent_parts = sent_parts
             trace.latency_ms = latency_ms
+            trace.diagnostics_json = diagnostics_json
             await session.commit()
 
     async def get_sent_message_ids(

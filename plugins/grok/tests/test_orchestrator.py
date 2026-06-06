@@ -89,6 +89,7 @@ def test_handle_event_skips_send_and_marks_trace_when_agent_terminates(monkeypat
             model_name="demo",
             error_code="terminated_by_agent",
             termination_reason="群里现在不需要我插话",
+            diagnostics=[],
         )
         plugin = SimpleNamespace(
             settings=SimpleNamespace(
@@ -183,10 +184,22 @@ def test_handle_event_persists_conversation_after_successful_send(monkeypatch):
             ),
             steps=[],
             model_name="demo",
-            messages_history=[
-                {"role": "user", "content": "# 本轮回复任务\n\ntest"},
-                {"role": "assistant", "content": "最终回复"},
+            transcript_turns=[
+                {
+                    "type": "user",
+                    "content": "test",
+                    "message_id": "evt-1",
+                    "timestamp": "2026-06-05 12:00:00",
+                    "sender": "Zodiac",
+                    "chat_type": "private",
+                    "chat_id": "20001",
+                },
+                {
+                    "type": "assistant",
+                    "content": "最终回复",
+                },
             ],
+            diagnostics=[],
         )
         plugin = SimpleNamespace(
             settings=SimpleNamespace(
@@ -223,8 +236,16 @@ def test_handle_event_persists_conversation_after_successful_send(monkeypatch):
                 "private",
                 "20001",
                 [
-                    {"role": "user", "content": "# 本轮回复任务\n\ntest"},
-                    {"role": "assistant", "content": "最终回复"},
+                    {
+                        "type": "user",
+                        "content": "test",
+                        "message_id": "evt-1",
+                        "timestamp": "2026-06-05 12:00:00",
+                        "sender": "Zodiac",
+                        "chat_type": "private",
+                        "chat_id": "20001",
+                    },
+                    {"type": "assistant", "content": "最终回复"},
                 ],
             )
         ]
@@ -284,10 +305,19 @@ def test_handle_event_does_not_persist_conversation_when_send_fails(monkeypatch)
             ),
             steps=[],
             model_name="demo",
-            messages_history=[
-                {"role": "user", "content": "# 本轮回复任务\n\ntest"},
-                {"role": "assistant", "content": "最终回复"},
+            transcript_turns=[
+                {
+                    "type": "user",
+                    "content": "test",
+                    "message_id": "evt-1",
+                    "timestamp": "2026-06-05 12:00:00",
+                    "sender": "Zodiac",
+                    "chat_type": "private",
+                    "chat_id": "20001",
+                },
+                {"type": "assistant", "content": "最终回复"},
             ],
+            diagnostics=[],
         )
         plugin = SimpleNamespace(
             settings=SimpleNamespace(
@@ -320,5 +350,116 @@ def test_handle_event_does_not_persist_conversation_when_send_fails(monkeypatch)
         await orchestrator.handle_event(plugin, event, "private")
 
         assert conversation_store.calls == []
+
+    asyncio.run(_run())
+
+
+def test_handle_event_finishes_trace_when_conversation_persist_fails(monkeypatch):
+    async def _run():
+        monkeypatch.setattr(
+            orchestrator,
+            "prefilter_event",
+            lambda event, settings: "ok",
+        )
+        monkeypatch.setattr(
+            orchestrator,
+            "final_decision",
+            lambda event, **kwargs: (True, "private_default"),
+        )
+        monkeypatch.setattr(
+            orchestrator,
+            "send_reply",
+            lambda api, event, text, settings: asyncio.sleep(
+                0,
+                result=orchestrator.SendOutcome(
+                    sent=True,
+                    sent_message_id="bot-1",
+                    sent_parts=1,
+                    error_code=None,
+                ),
+            ),
+        )
+
+        trace_store = _FakeTraceStore()
+
+        class _BrokenConversationStore:
+            async def upsert_session(self, chat_type, chat_id, messages):
+                del chat_type, chat_id, messages
+                raise RuntimeError("disk full")
+
+        source_msg = SimpleNamespace(
+            chat_type="private",
+            group_id=None,
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="test",
+            sender_card="",
+            sender_nickname="Zodiac",
+            timestamp="2026-06-05 12:00:00",
+        )
+        outcome = AgentOutcome(
+            text="最终回复",
+            working_context=AgentWorkingContext(
+                context=ContextBundle(
+                    chat_type="private",
+                    chat_id="20001",
+                    user_id="20001",
+                    current_message="test",
+                    trigger_reason="private_default",
+                    bot_id="10000",
+                )
+            ),
+            steps=[],
+            model_name="demo",
+            transcript_turns=[
+                {
+                    "type": "user",
+                    "content": "test",
+                    "message_id": "evt-1",
+                    "timestamp": "2026-06-05 12:00:00",
+                    "sender": "Zodiac",
+                    "chat_type": "private",
+                    "chat_id": "20001",
+                },
+                {"type": "assistant", "content": "最终回复"},
+            ],
+            diagnostics=[],
+        )
+        plugin = SimpleNamespace(
+            settings=SimpleNamespace(
+                trigger=SimpleNamespace(allow_reply_to_bot=True),
+                read_after_write=SimpleNamespace(timeout_ms=0, backoff_ms=0),
+            ),
+            _bridge=SimpleNamespace(
+                wait_until_visible=lambda *args, **kwargs: asyncio.sleep(
+                    0, result=source_msg
+                )
+            ),
+            _trace_store=trace_store,
+            _conversation_store=_BrokenConversationStore(),
+            _runtime=SimpleNamespace(
+                run=lambda **kwargs: asyncio.sleep(0, result=outcome)
+            ),
+            _cooldowns=None,
+            _profile_json_store=None,
+            api=SimpleNamespace(),
+            logger=SimpleNamespace(warning=lambda *args, **kwargs: None),
+        )
+        event = SimpleNamespace(
+            group_id=None,
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="test",
+            self_id="10000",
+            time="2026-06-05 12:00:00",
+        )
+
+        await orchestrator.handle_event(plugin, event, "private")
+
+        assert trace_store.finished_trace is not None
+        assert trace_store.finished_trace["sent"] is True
+        diagnostics = json.loads(trace_store.finished_trace["diagnostics_json"])
+        assert diagnostics[0]["code"] == "conversation_persist_failed"
+        assert "disk full" in diagnostics[0]["message"]
 
     asyncio.run(_run())

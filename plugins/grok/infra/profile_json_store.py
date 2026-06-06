@@ -15,6 +15,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from ..profile_defaults import build_default_profile
+
 _DEFAULT_DATA: dict[str, Any] = {
     "version": 1,
     "updated_at": "",
@@ -121,6 +123,55 @@ class ProfileJsonStore:
                 self._flush(raw)
 
         await asyncio.to_thread(_delete)
+
+    async def observe_user(
+        self,
+        user_id: str,
+        *,
+        chat_type: str,
+        chat_id: str,
+        sender_nickname: str = "",
+        sender_card: str = "",
+        observed_at: str = "",
+    ) -> None:
+        def _observe() -> None:
+            with self._lock:
+                self._ensure_loaded()
+                raw = self._reload()
+                existing = raw["users"].get(str(user_id))
+                if isinstance(existing, dict):
+                    record = dict(existing)
+                else:
+                    record = build_default_profile(
+                        user_id=str(user_id),
+                        chat_type=str(chat_type or ""),
+                        chat_id=str(chat_id or ""),
+                        sender_nickname=str(sender_nickname or ""),
+                        sender_card=str(sender_card or ""),
+                    )
+                record["user_id"] = str(user_id)
+                if not str(record.get("username", "") or "").strip():
+                    record["username"] = str(
+                        sender_nickname or sender_card or user_id
+                    ).strip()[:100]
+                record["last_seen_at"] = str(observed_at or "")
+                record["last_seen_chat_type"] = str(chat_type or "")
+                record["last_seen_chat_id"] = str(chat_id or "")
+                if str(chat_type or "") == "group" and str(chat_id or ""):
+                    group_nicknames = record.get("group_nicknames", {}) or {}
+                    nickname = str(sender_card or sender_nickname or "").strip()
+                    if nickname:
+                        group_nicknames[str(chat_id)] = nickname[:100]
+                    record["group_nicknames"] = group_nicknames
+                if str(chat_type or "") == "private":
+                    private_nickname = str(sender_nickname or sender_card or "").strip()
+                    if private_nickname:
+                        record["private_nickname"] = private_nickname[:100]
+                    record["last_private_seen_at"] = str(observed_at or "")
+                raw["users"][str(user_id)] = record
+                self._flush(raw)
+
+        await asyncio.to_thread(_observe)
 
     async def list_profiles(self) -> list[dict[str, Any]]:
         def _list() -> list[dict[str, Any]]:

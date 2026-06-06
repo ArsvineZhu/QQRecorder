@@ -2,25 +2,62 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "anchor": {
+      "type": "string",
+      "enum": [
+        "current",
+        "message_id"
+      ],
+      "description": "锚点类型。默认用当前消息；如果要围绕历史消息展开，改成 message_id。"
+    },
+    "message_id": {
+      "type": "string",
+      "description": "当 anchor=message_id 时，要作为锚点的消息 ID。"
+    },
+    "direction": {
+      "type": "string",
+      "enum": [
+        "backward",
+        "forward",
+        "around"
+      ],
+      "description": "读取方向。backward 看锚点之前，forward 看之后，around 同时看前后。"
+    },
+    "before": {
+      "type": "integer",
+      "description": "当 direction=around 时，最多读取锚点之前多少条。"
+    },
+    "after": {
+      "type": "integer",
+      "description": "当 direction=around 时，最多读取锚点之后多少条。"
+    },
     "limit": {
       "type": "integer",
-      "description": "最多返回几条最近消息。默认 30。太大时可读性会明显下降。"
+      "description": "最多返回几条消息。direction=backward/forward 时主要使用这个值。"
     },
     "since_minutes": {
       "type": "integer",
-      "description": "从当前时间回溯多少分钟。默认 30。范围 5~1440。"
+      "description": "时间窗口限制。backward 表示向前回溯多少分钟，forward 表示向后看多少分钟。"
+    },
+    "include_forward_preview": {
+      "type": "boolean",
+      "description": "是否附带转发摘要预览。"
+    },
+    "include_vision_preview": {
+      "type": "boolean",
+      "description": "是否附带图片/视频已有语义摘要的预览。"
     }
   },
   "required": [],
-  "description": "加载当前会话的最近消息列表，用于理解聊天背景。返回按时间排序的消息列表，每条包含时间戳、发送者、消息文本、是否有图片/转发标记。建议 limit 设 10~15 即可获取足够的上下文。",
+  "description": "围绕当前消息或指定 message_id 加载聊天上下文，可向前、向后或前后一起读取。返回的每条消息都会带 message_id，方便继续翻页或配合 load_message / extract_forward 精查。",
   "x-prompt": {
-    "summary": "加载当前会话的最近消息，用来补充聊天背景",
+    "summary": "围绕当前消息或指定锚点加载聊天上下文",
     "usage": [
-      "当你缺少最近聊天背景时调用",
-      "limit 10 到 15 通常就够，没必要默认拉很大"
+      "当你需要补最近背景，或围绕某条历史消息继续往前/往后看时调用",
+      "around 适合查看一段争论或上下文片段，backward/forward 适合单向追溯"
     ],
     "guidance": [
-      "先理解当前消息，再用它补背景",
+      "优先从当前消息出发，只有需要追指定历史点时再传 message_id",
       "如果只是想展开一条被截断的长消息，改用 load_message"
     ],
     "boundaries": [

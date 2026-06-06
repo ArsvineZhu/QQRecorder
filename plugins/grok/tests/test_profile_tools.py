@@ -290,3 +290,70 @@ def test_delete_profile_resets_profile_to_defaults_instead_of_removing_it():
     assert profile["group_nicknames"] == {"g1": "群名片"}
     assert profile["group_instruction"]
     assert profile["private_instruction"]
+
+
+def test_profile_json_store_observe_user_merges_group_and_private_presence(tmp_path):
+    async def _run():
+        path = tmp_path / "profiles.json"
+        store = ProfileJsonStore(str(path))
+        await store.init_db()
+
+        await store.observe_user(
+            "u1",
+            chat_type="group",
+            chat_id="g1",
+            sender_nickname="Arsvine",
+            sender_card="群名片A",
+            observed_at="2026-06-05T12:00:00+00:00",
+        )
+        await store.observe_user(
+            "u1",
+            chat_type="private",
+            chat_id="u1",
+            sender_nickname="Arsvine 私聊",
+            sender_card="",
+            observed_at="2026-06-05T12:10:00+00:00",
+        )
+
+        profile = await store.get_profile("u1")
+        await store.close()
+        return profile
+
+    profile = asyncio.run(_run())
+    assert profile is not None
+    assert profile["group_nicknames"]["g1"] == "群名片A"
+    assert profile["private_nickname"] == "Arsvine 私聊"
+    assert profile["last_seen_chat_type"] == "private"
+    assert profile["last_seen_chat_id"] == "u1"
+
+
+def test_profile_json_store_observe_user_updates_group_nickname_for_same_chat(tmp_path):
+    async def _run():
+        path = tmp_path / "profiles.json"
+        store = ProfileJsonStore(str(path))
+        await store.init_db()
+
+        await store.observe_user(
+            "u1",
+            chat_type="group",
+            chat_id="g1",
+            sender_nickname="Arsvine",
+            sender_card="旧群名片",
+            observed_at="2026-06-05T12:00:00+00:00",
+        )
+        await store.observe_user(
+            "u1",
+            chat_type="group",
+            chat_id="g1",
+            sender_nickname="Arsvine",
+            sender_card="新群名片",
+            observed_at="2026-06-05T12:30:00+00:00",
+        )
+
+        profile = await store.get_profile("u1")
+        await store.close()
+        return profile
+
+    profile = asyncio.run(_run())
+    assert profile is not None
+    assert profile["group_nicknames"]["g1"] == "新群名片"

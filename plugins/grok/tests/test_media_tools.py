@@ -285,6 +285,110 @@ def test_read_picture_persists_semantic_text(tmp_path, monkeypatch):
     asyncio.run(_run())
 
 
+def test_read_picture_reuses_cached_analysis_before_paid_model(tmp_path, monkeypatch):
+    async def _run():
+        image_path = tmp_path / "image.bin"
+        image_path.write_bytes(b"not-really-an-image")
+        image = SimpleNamespace(id=1, local_path=str(image_path), file_unique="fu")
+        message = SimpleNamespace(
+            id=10,
+            user_id="20001",
+            group_id="30001",
+            raw_message="图片消息",
+            images=[image],
+        )
+        plugin = SimpleNamespace(
+            _vision_client=object(),
+            _vision_quota=None,
+            _bridge=SimpleNamespace(),
+            settings=_settings(),
+            logger=SimpleNamespace(info=lambda *args, **kwargs: None),
+        )
+
+        async def _cached_get_analysis(bridge, file_unique, model_used=None):
+            del bridge, file_unique, model_used
+            return json.dumps(
+                {
+                    "image_type": "screenshot",
+                    "literal_content": {"summary": "缓存摘要"},
+                    "semantic_interpretation": {"main_meaning": "缓存含义"},
+                    "confidence": 0.9,
+                },
+                ensure_ascii=False,
+            )
+
+        async def _fail_analyze_image(*args, **kwargs):
+            raise AssertionError("paid image model should not run on cache hit")
+
+        monkeypatch.setattr(media_tools, "get_analysis", _cached_get_analysis)
+        monkeypatch.setattr(media_tools, "analyze_image", _fail_analyze_image)
+
+        result = await _media_tool(plugin, "read_picture").handler(
+            {"source_msg": message, "user_id": "20001", "chat_id": "30001"},
+            {},
+        )
+
+        assert result.status == "ok"
+        assert result.data["image_type"] == "screenshot"
+        assert result.data["semantic_interpretation"]["main_meaning"] == "缓存含义"
+
+    asyncio.run(_run())
+
+
+def test_read_video_reuses_cached_analysis_before_paid_model(monkeypatch):
+    async def _run():
+        message = SimpleNamespace(
+            id=20,
+            user_id="20002",
+            group_id="30001",
+            raw_message="视频消息",
+            segments=[
+                SimpleNamespace(
+                    segment_type="video",
+                    segment_data=json.dumps(
+                        {"url": "https://example.test/video.mp4", "file": "/tmp/v.mp4"}
+                    ),
+                )
+            ],
+        )
+        plugin = SimpleNamespace(
+            _vision_client=object(),
+            _vision_quota=None,
+            _bridge=SimpleNamespace(),
+            settings=_settings(),
+            logger=SimpleNamespace(info=lambda *args, **kwargs: None),
+        )
+
+        async def _cached_get_analysis(bridge, file_unique, model_used=None):
+            del bridge, file_unique, model_used
+            return json.dumps(
+                {
+                    "video_type": "clip",
+                    "visual_summary": "缓存视频摘要",
+                    "semantic_meaning": "缓存视频含义",
+                    "confidence": 0.8,
+                },
+                ensure_ascii=False,
+            )
+
+        async def _fail_analyze_video(*args, **kwargs):
+            raise AssertionError("paid video model should not run on cache hit")
+
+        monkeypatch.setattr(media_tools, "get_analysis", _cached_get_analysis)
+        monkeypatch.setattr(media_tools, "analyze_video", _fail_analyze_video)
+
+        result = await _media_tool(plugin, "read_video").handler(
+            {"source_msg": message, "user_id": "20002", "chat_id": "30001"},
+            {},
+        )
+
+        assert result.status == "ok"
+        assert result.data["video_type"] == "clip"
+        assert result.data["semantic_meaning"] == "缓存视频含义"
+
+    asyncio.run(_run())
+
+
 def test_read_video_persists_semantic_text(monkeypatch):
     async def _run():
         plugin = SimpleNamespace(

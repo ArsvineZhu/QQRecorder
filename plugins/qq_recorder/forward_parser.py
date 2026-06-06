@@ -116,6 +116,30 @@ def parse_forward_nodes(
     return result
 
 
+def _coerce_forward_message_item(item: dict) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    if item.get("type") == "node":
+        return item
+
+    sender = item.get("sender", {}) or {}
+    content = item.get("content")
+    if content is None and isinstance(item.get("data"), dict):
+        content = item["data"].get("content")
+    if content is None:
+        return None
+
+    return {
+        "type": "node",
+        "data": {
+            "user_id": str(sender.get("user_id", "") or item.get("user_id", "")),
+            "nickname": str(sender.get("nickname", "") or item.get("nickname", "")),
+            "forward_id": str(item.get("forward_id", "") or ""),
+            "content": content,
+        },
+    }
+
+
 def flatten_forward_nodes(nodes: list[ForwardNode]) -> list[dict]:
     result: list[dict] = []
     for node in nodes:
@@ -142,4 +166,9 @@ def parse_forward_response(
         messages = response_data.messages
     else:
         messages = response_data.get("messages", [])
-    return parse_forward_nodes(messages, depth=0, max_depth=max_depth)
+    normalized = []
+    for item in messages:
+        coerced = _coerce_forward_message_item(item)
+        if coerced is not None:
+            normalized.append(coerced)
+    return parse_forward_nodes(normalized, depth=0, max_depth=max_depth)

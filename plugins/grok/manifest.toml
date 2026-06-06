@@ -1,5 +1,5 @@
 name = "grok"
-version = "1.3.3"
+version = "1.4.0"
 main = "plugin.py"
 entry_class = "GrokPlugin"
 author = "Arsvine Zhu"

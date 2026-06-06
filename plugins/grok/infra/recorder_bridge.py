@@ -8,11 +8,14 @@ from ..compat import import_sibling_plugin_module
 
 _models = import_sibling_plugin_module("qq_recorder.models")
 _storage = import_sibling_plugin_module("qq_recorder.storage")
+_forward_parser = import_sibling_plugin_module("qq_recorder.forward_parser")
 Message = _models.Message
 ForwardMessage = _models.ForwardMessage
 init_engine = _models.init_engine
 MessageStorage = _storage.MessageStorage
 _ensure_message_sender_columns = _storage._ensure_message_sender_columns
+flatten_forward_nodes = _forward_parser.flatten_forward_nodes
+parse_forward_response = _forward_parser.parse_forward_response
 
 
 class RecorderBridge:
@@ -180,6 +183,112 @@ class RecorderBridge:
             after_messages = list(after_result.scalars().all())
             return before_messages + after_messages
 
+    async def get_after(
+        self,
+        anchor: Message,
+        limit: int,
+        since_minutes: int | None = None,
+    ) -> list[Message]:
+        assert self.storage is not None, "connect_existing() not called"
+        anchor_time = getattr(anchor, "timestamp", None)
+        anchor_db_id = getattr(anchor, "id", None)
+        if anchor_time is None or anchor_db_id is None:
+            return []
+        chat_type = str(getattr(anchor, "chat_type", "") or "")
+        chat_id = str(
+            getattr(anchor, "group_id", "") or getattr(anchor, "user_id", "") or ""
+        )
+        async with self.storage._session() as session:
+            stmt = (
+                self._message_stmt()
+                .where(*self._chat_filters(chat_type, chat_id))
+                .where(
+                    or_(
+                        Message.timestamp > anchor_time,
+                        and_(
+                            Message.timestamp == anchor_time,
+                            Message.id > anchor_db_id,
+                        ),
+                    )
+                )
+                .order_by(asc(Message.timestamp), asc(Message.id))
+                .limit(limit)
+            )
+            if since_minutes is not None:
+                stmt = stmt.where(
+                    Message.timestamp <= anchor_time + timedelta(minutes=since_minutes)
+                )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def query_chat_history(
+        self,
+        *,
+        user_id: str | None = None,
+        chat_type: str | None = None,
+        chat_id: str | None = None,
+        keyword: str | None = None,
+        time_from: str | None = None,
+        time_to: str | None = None,
+        has_forward: bool | None = None,
+        has_image: bool | None = None,
+        has_reply: bool | None = None,
+        has_video: bool | None = None,
+        has_at: bool | None = None,
+        has_app_share: bool | None = None,
+        limit: int = 20,
+        order: str = "desc",
+    ) -> list[Message]:
+        assert self.storage is not None, "connect_existing() not called"
+        return await self.storage.query_messages(
+            user_id=user_id,
+            chat_type=chat_type,
+            chat_id=chat_id,
+            keyword=keyword,
+            time_from=_parse_time_input(time_from),
+            time_to=_parse_time_input(time_to),
+            has_forward=has_forward,
+            has_image=has_image,
+            has_reply=has_reply,
+            has_video=has_video,
+            has_at=has_at,
+            has_app_share=has_app_share,
+            limit=limit,
+            order=order,
+        )
+
+    async def get_image_analyses_by_message(self, message_db_id: int):
+        assert self.storage is not None, "connect_existing() not called"
+        return await self.storage.get_image_analyses_by_message(message_db_id)
+
+    async def backfill_forward_messages(
+        self,
+        message_db_id: int,
+        forward_messages: list[dict],
+    ) -> None:
+        assert self.storage is not None, "connect_existing() not called"
+        async with self.storage._session() as session:
+            message = await session.get(Message, message_db_id)
+            if message is None:
+                return
+            existing_stmt = select(ForwardMessage).where(
+                ForwardMessage.message_id == message_db_id
+            )
+            existing = await session.execute(existing_stmt)
+            for row in existing.scalars().all():
+                await session.delete(row)
+
+            if forward_messages:
+                await _storage._add_forward_messages(
+                    session,
+                    message_db_id,
+                    forward_messages,
+                )
+                message.has_forward = True
+            else:
+                message.has_forward = False
+            await session.commit()
+
     @staticmethod
     def _message_stmt():
         return select(Message).options(
@@ -209,6 +318,14 @@ def _first_reply_id(message) -> str | None:
     return str(value) if value else None
 
 
+def _parse_time_input(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
+
+
 # ── Image/Video analysis persistence ──────────────────────────────
 
 
@@ -228,9 +345,10 @@ async def save_analysis(
     video_id: int | None = None,
     message_db_id: int | None = None,
 ) -> None:
-    if bridge is None or bridge.storage is None:
+    storage = None if bridge is None else getattr(bridge, "storage", None)
+    if storage is None:
         return
-    await bridge.storage.save_image_analysis(
+    await storage.save_image_analysis(
         file_unique=file_unique,
         model_used=model_used,
         analysis_json=analysis_json,
@@ -251,9 +369,10 @@ async def get_analysis(
     file_unique: str,
     model_used: str | None = None,
 ) -> str | None:
-    if bridge is None or bridge.storage is None:
+    storage = None if bridge is None else getattr(bridge, "storage", None)
+    if storage is None:
         return None
-    row = await bridge.storage.get_image_analysis(file_unique, model_used=model_used)
+    row = await storage.get_image_analysis(file_unique, model_used=model_used)
     if row is None:
         return None
     return row.analysis_json

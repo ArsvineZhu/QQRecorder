@@ -157,6 +157,17 @@ class MessageProcessor:
                     response, max_depth=self.settings.forward.max_depth
                 )
                 flattened = flatten_forward_nodes(nodes)
+                response_shape = type(response).__name__
+                if isinstance(response, dict):
+                    response_shape = ",".join(
+                        sorted(str(key) for key in response.keys())
+                    )
+                self.logger.info(
+                    "Forward parsed forward_id=%s response_shape=%s flatten_count=%d",
+                    forward_id,
+                    response_shape,
+                    len(flattened),
+                )
                 all_forwards.extend(flattened)
             except Exception as e:
                 self.logger.warning("Forward parse failed for %s: %s", forward_id, e)

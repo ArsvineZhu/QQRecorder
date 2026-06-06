@@ -26,6 +26,7 @@ class AgentReplyTrace(Base):
     context_version: Mapped[str] = mapped_column(String, default="v1")
     profile_version: Mapped[str] = mapped_column(String, default="v1")
     working_context_json: Mapped[str] = mapped_column(Text, default="{}")
+    diagnostics_json: Mapped[str] = mapped_column(Text, default="[]")
     model_name: Mapped[str] = mapped_column(String, default="")
     response_text: Mapped[str] = mapped_column(Text, default="")
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)

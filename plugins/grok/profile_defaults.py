@@ -25,6 +25,11 @@ def build_default_profile(
         "language_style": "",
         "habit_preferences": [],
         "group_nicknames": {},
+        "private_nickname": "",
+        "last_private_seen_at": "",
+        "last_seen_at": "",
+        "last_seen_chat_type": "",
+        "last_seen_chat_id": "",
     }
     if chat_type == "group" and chat_id and sender_card:
         record["group_nicknames"] = {str(chat_id): sender_card[:100]}

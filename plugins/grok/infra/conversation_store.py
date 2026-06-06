@@ -1,6 +1,7 @@
 import json
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert
 
 from ..models import AgentConversationSession, Base, init_engine
 
@@ -44,20 +45,18 @@ class AgentConversationSessionStore:
         messages: list[dict],
     ) -> None:
         async with self._session() as session:
-            stmt = select(AgentConversationSession).where(
-                AgentConversationSession.chat_type == str(chat_type or ""),
-                AgentConversationSession.chat_id == str(chat_id or ""),
-            )
-            result = await session.execute(stmt)
-            record = result.scalar_one_or_none()
             payload = json.dumps(messages, ensure_ascii=False)
-            if record is None:
-                record = AgentConversationSession(
-                    chat_type=str(chat_type or ""),
-                    chat_id=str(chat_id or ""),
-                    messages_json=payload,
-                )
-                session.add(record)
-            else:
-                record.messages_json = payload
+            stmt = insert(AgentConversationSession).values(
+                chat_type=str(chat_type or ""),
+                chat_id=str(chat_id or ""),
+                messages_json=payload,
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[
+                    AgentConversationSession.chat_type,
+                    AgentConversationSession.chat_id,
+                ],
+                set_={"messages_json": payload},
+            )
+            await session.execute(stmt)
             await session.commit()
