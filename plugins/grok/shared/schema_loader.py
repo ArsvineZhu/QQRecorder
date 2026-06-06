@@ -2,6 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
+
+DEFAULT_TOOL_METADATA = {
+    "full_exposure": False,
+    "counts_against_budget": True,
+    "same_arguments_limit": "none",
+}
+_VALID_SAME_ARGUMENTS_LIMITS = {"none", "per_agent_run"}
 
 
 def load_schema(relative_path: str) -> dict:
@@ -25,6 +33,42 @@ def load_tool_prompt_assets() -> tuple[dict, list[dict]]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         payloads.append({"name": path.stem, "schema": payload})
     return config, payloads
+
+
+def load_tool_schema_map() -> dict[str, dict]:
+    _, payloads = load_tool_prompt_assets()
+    return {item["name"]: item["schema"] for item in payloads}
+
+
+def load_tool_metadata(schema: dict[str, Any] | None) -> dict[str, Any]:
+    raw = {}
+    if isinstance(schema, dict):
+        raw = schema.get("x-tool-meta", {}) or {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    same_arguments_limit = str(
+        raw.get(
+            "same_arguments_limit",
+            DEFAULT_TOOL_METADATA["same_arguments_limit"],
+        )
+        or DEFAULT_TOOL_METADATA["same_arguments_limit"]
+    ).strip()
+    if same_arguments_limit not in _VALID_SAME_ARGUMENTS_LIMITS:
+        same_arguments_limit = DEFAULT_TOOL_METADATA["same_arguments_limit"]
+
+    return {
+        "full_exposure": bool(
+            raw.get("full_exposure", DEFAULT_TOOL_METADATA["full_exposure"])
+        ),
+        "counts_against_budget": bool(
+            raw.get(
+                "counts_against_budget",
+                DEFAULT_TOOL_METADATA["counts_against_budget"],
+            )
+        ),
+        "same_arguments_limit": same_arguments_limit,
+    }
 
 
 def _base_dir() -> Path:

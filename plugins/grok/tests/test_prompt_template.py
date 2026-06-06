@@ -32,8 +32,12 @@ def test_render_system_prompt_uses_grok_template_text():
     assert "load_tool_guide" in rendered
     assert "获取更多信息" not in rendered
     assert "JSON 动态注入" not in rendered
-    assert "## `terminate`" not in rendered
-    assert "群聊里没有人明确要你回答" not in rendered
+    assert "## `load_tool_guide`" in rendered
+    assert "## `terminate`" in rendered
+    assert "群聊里没有人明确要你回答" in rendered
+    assert "不消耗工具调用额度" in rendered
+    assert "同一轮里不要用相同参数重复调用" in rendered
+    assert "## `track_reply`" not in rendered
     assert "回复要短、快、有判断，适合插入群聊。" not in rendered
 
 

@@ -41,7 +41,7 @@
     "description": "更新当前用户的档案信息。只覆盖传入的字段，不传的字段保留原值。适用于用户明确要求修改称呼、风格或长期偏好的场景。",
     "x-prompt": {
         "summary": "更新用户档案中的部分字段，未传字段保持原值",
-    "usage": [
+        "usage": [
             "用户明确要求记住某个偏好或修改称呼时调用",
             "只在你准备写入长期设定时调用"
         ],
@@ -54,5 +54,10 @@
             "不要把一次普通聊天内容误写成长期偏好",
             "如果用户只是临时要求当前这次回答换个说法，不一定要写入档案"
         ]
+    },
+    "x-tool-meta": {
+        "full_exposure": false,
+        "counts_against_budget": true,
+        "same_arguments_limit": "per_agent_run"
     }
 }

@@ -31,5 +31,10 @@
       "不要把它当成通用上下文加载工具",
       "不要在没有明确回复关系时硬调它"
     ]
+  },
+  "x-tool-meta": {
+    "full_exposure": false,
+    "counts_against_budget": true,
+    "same_arguments_limit": "per_agent_run"
   }
 }

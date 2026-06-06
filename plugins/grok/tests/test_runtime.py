@@ -171,6 +171,53 @@ def test_agent_runtime_returns_terminated_outcome_without_follow_up_reply():
     asyncio.run(_run())
 
 
+def test_agent_runtime_terminate_does_not_consume_budget():
+    async def _run():
+        settings = SimpleNamespace(
+            agent=SimpleNamespace(
+                max_steps=3,
+                max_tool_calls_per_turn=2,
+                max_tool_calls_total=1,
+            ),
+            profile=SimpleNamespace(),
+        )
+        plugin = SimpleNamespace(
+            settings=settings,
+            api=SimpleNamespace(ai=object()),
+            logger=SimpleNamespace(info=lambda *args, **kwargs: None),
+        )
+        runtime = AgentRuntime(
+            plugin,
+            registry=_TerminateRegistry(),
+            model_runner=_TerminateAdapter().run,
+        )
+        source_msg = SimpleNamespace(
+            chat_type="group",
+            group_id="30001",
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="@bot 这条先不用接",
+        )
+        event = SimpleNamespace(
+            group_id="30001",
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="@bot 这条先不用接",
+        )
+
+        outcome = await runtime.run(
+            event=event,
+            source_msg=source_msg,
+            trigger_reason="group_at_bot",
+        )
+
+        assert outcome.error_code == "terminated_by_agent"
+        assert outcome.working_context.tool_call_budget_total == 1
+        assert outcome.working_context.tool_call_budget_remaining == 1
+
+    asyncio.run(_run())
+
+
 def test_agent_step_summary_keeps_status_and_tool_name():
     step = AgentStep(kind="tool", tool_name="load_profile", status="ok", summary="done")
 

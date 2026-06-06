@@ -7,7 +7,9 @@
       "description": "要读取的记录消息 ID。通常来自上下文中的 msg-id。"
     }
   },
-  "required": ["message_id"],
+  "required": [
+    "message_id"
+  ],
   "description": "按 message_id 读取一条完整记录消息，常用于展开上下文里被截断的长消息。",
   "x-prompt": {
     "summary": "按 message_id 读取一条完整记录消息",
@@ -24,5 +26,10 @@
       "不要为了好奇展开与当前问题无关的长消息",
       "展开后仍要以当前消息的意图为准"
     ]
+  },
+  "x-tool-meta": {
+    "full_exposure": false,
+    "counts_against_budget": true,
+    "same_arguments_limit": "per_agent_run"
   }
 }

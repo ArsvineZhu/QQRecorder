@@ -28,5 +28,10 @@
       "相关消息只能补充背景，不能覆盖当前消息",
       "不要为了凑信息量把无关聊天也拉进来"
     ]
+  },
+  "x-tool-meta": {
+    "full_exposure": false,
+    "counts_against_budget": true,
+    "same_arguments_limit": "per_agent_run"
   }
 }

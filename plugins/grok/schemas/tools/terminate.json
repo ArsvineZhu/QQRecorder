@@ -4,11 +4,11 @@
   "properties": {
     "reason": {
       "type": "string",
-      "description": "用于概括为什么选择静默结束的简短说明。"
+      "description": "用于概括为什么选择结束的简短说明。"
     }
   },
   "required": [],
-  "description": "静默结束当前回合，不向聊天发送任何消息。仅在当前最合适的行为是不回复时使用。",
+  "description": "结束当前对话。在决定不回复时使用，尤其是对话者决定不回复/离开时。",
   "x-prompt": {
     "summary": "静默结束本轮 Agent，不向聊天发送任何消息",
     "usage": [
@@ -25,5 +25,10 @@
       "不要把它当作逃避回答的手段",
       "如果只是信息不足，但继续追问或说明不确定性更合适，就不要用它"
     ]
+  },
+  "x-tool-meta": {
+    "full_exposure": true,
+    "counts_against_budget": false,
+    "same_arguments_limit": "per_agent_run"
   }
 }

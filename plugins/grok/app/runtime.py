@@ -14,6 +14,7 @@ from ..context.evidence import (
     ContextBundle,
     EvidenceBlock,
 )
+from ..shared import load_tool_metadata, load_tool_schema_map
 from ..tools.context_tools import build_context_tools
 from ..tools.guide_tools import build_load_tool_guide_tool
 from ..tools.media_tools import build_media_tools
@@ -41,6 +42,7 @@ class AgentRuntime:
         self.registry = registry or self._build_registry(plugin)
         self._model_runner = model_runner or self._run_model
         self._messages_history: list[dict] | None = None
+        self._tool_schema_map = load_tool_schema_map()
 
     async def run(self, *, event, source_msg, trigger_reason: str) -> AgentOutcome:  # noqa: C901
         working_context = AgentWorkingContext(
@@ -97,6 +99,7 @@ class AgentRuntime:
         total_tool_calls = 0
         max_tool_calls_total = working_context.tool_call_budget_total
         seen_track_reply_keys: set[tuple[str, int]] = set()
+        seen_tool_argument_keys: set[tuple[str, str]] = set()
         self._messages_history = None
 
         for _ in range(working_context.step_budget):
@@ -141,7 +144,11 @@ class AgentRuntime:
                     status="pending",
                     summary="",
                 )
-                counts_against_budget = _counts_against_budget(tool_call.name)
+                tool_policy = _tool_policy(
+                    tool_name=tool_call.name,
+                    schema_map=self._tool_schema_map,
+                )
+                counts_against_budget = _counts_against_budget(tool_policy)
                 if counts_against_budget and total_tool_calls >= max_tool_calls_total:
                     budget_response = ToolResponse(
                         status="failed",
@@ -217,6 +224,50 @@ class AgentRuntime:
                         )
                     logger.info(
                         "runtime: duplicate track_reply skipped args=%s",
+                        tool_call.arguments,
+                    )
+                    continue
+
+                duplicate_response = _check_duplicate_same_arguments(
+                    tool_call=tool_call,
+                    tool_policy=tool_policy,
+                    seen_tool_argument_keys=seen_tool_argument_keys,
+                )
+                if duplicate_response is not None:
+                    step.status = "skipped"
+                    step.summary = _normalize_result_payload(
+                        duplicate_response,
+                        limit=getattr(
+                            self.plugin.settings.agent,
+                            "max_evidence_chars",
+                            6000,
+                        ),
+                        tool_name=tool_call.name,
+                    )
+                    steps.append(step)
+                    working_context.evidence.append(
+                        EvidenceBlock(
+                            kind="tool_result",
+                            label=tool_call.name,
+                            content=step.summary,
+                            source="runtime",
+                            metadata={"arguments": tool_call.arguments},
+                        )
+                    )
+                    if self._messages_history is not None:
+                        self._messages_history.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.tool_call_id,
+                                "content": step.summary,
+                            }
+                        )
+                    logger.info(
+                        (
+                            "runtime: duplicate same-arguments tool skipped"
+                            " tool=%s args=%s"
+                        ),
+                        tool_call.name,
                         tool_call.arguments,
                     )
                     continue
@@ -364,8 +415,16 @@ def _tool_call_total_budget(agent_settings: Any) -> int:
     return max_steps * per_turn
 
 
-def _counts_against_budget(tool_name: str) -> bool:
-    return tool_name != "load_tool_guide"
+def _counts_against_budget(tool_policy: dict[str, Any]) -> bool:
+    return bool(tool_policy.get("counts_against_budget", True))
+
+
+def _tool_policy(
+    *,
+    tool_name: str,
+    schema_map: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    return load_tool_metadata(schema_map.get(tool_name))
 
 
 def _assistant_name(settings: Any) -> str:
@@ -397,6 +456,31 @@ def _check_duplicate_track_reply(
     )
 
 
+def _check_duplicate_same_arguments(
+    *,
+    tool_call: Any,
+    tool_policy: dict[str, Any],
+    seen_tool_argument_keys: set[tuple[str, str]],
+) -> ToolResponse | None:
+    if tool_policy.get("same_arguments_limit") != "per_agent_run":
+        return None
+
+    tool_name = str(getattr(tool_call, "name", "") or "").strip()
+    arguments = getattr(tool_call, "arguments", {}) or {}
+    key = (tool_name, _stable_argument_key(arguments))
+    if key not in seen_tool_argument_keys:
+        seen_tool_argument_keys.add(key)
+        return None
+
+    return ToolResponse(
+        status="failed",
+        data={},
+        error_code="duplicate_tool_call_same_arguments",
+        message=f"`{tool_name}` 在同一轮里已经用相同参数调用过，不要重复调用",
+        retryable=False,
+    )
+
+
 def _track_reply_key(arguments: dict[str, Any], source_msg: Any) -> tuple[str, int]:
     message_id = str(
         arguments.get("message_id")
@@ -413,6 +497,13 @@ def _safe_track_reply_depth(value: Any) -> int:
     except (TypeError, ValueError):
         return 6
     return max(1, depth)
+
+
+def _stable_argument_key(arguments: dict[str, Any]) -> str:
+    try:
+        return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return json.dumps(str(arguments), ensure_ascii=False)
 
 
 def _chat_type(event) -> str:

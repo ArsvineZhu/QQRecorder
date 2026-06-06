@@ -349,8 +349,88 @@ def test_runtime_does_not_charge_budget_for_load_tool_guide():
             registry=registry,
             model_runner=_SequencedToolAdapter(
                 [
-                    {"kind": "tool", "name": "load_tool_guide", "arguments": {}},
-                    {"kind": "tool", "name": "load_tool_guide", "arguments": {}},
+                    {
+                        "kind": "tool",
+                        "name": "load_tool_guide",
+                        "arguments": {"tool_name": "terminate"},
+                    },
+                    {
+                        "kind": "tool",
+                        "name": "load_tool_guide",
+                        "arguments": {"tool_name": "terminate"},
+                    },
+                    {"kind": "tool", "name": "load_context", "arguments": {}},
+                    {"kind": "final", "text": "done"},
+                ]
+            ).run,
+        )
+        source_msg = SimpleNamespace(
+            chat_type="group",
+            group_id="30001",
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="/agent hi",
+        )
+        event = SimpleNamespace(
+            group_id="30001",
+            user_id="20001",
+            message_id="evt-1",
+            raw_message="/agent hi",
+        )
+
+        outcome = await runtime.run(
+            event=event,
+            source_msg=source_msg,
+            trigger_reason="prefix:/agent",
+        )
+
+        assert outcome.text == "done"
+        assert outcome.working_context.tool_call_budget_total == 1
+        assert outcome.working_context.tool_call_budget_remaining == 0
+        assert [step.tool_name for step in outcome.steps if step.status == "ok"] == [
+            "load_tool_guide",
+            "load_context",
+        ]
+        duplicate_step = next(
+            step for step in outcome.steps if step.status == "skipped"
+        )
+        payload = json.loads(duplicate_step.summary)
+        assert duplicate_step.tool_name == "load_tool_guide"
+        assert payload["error_code"] == "duplicate_tool_call_same_arguments"
+        assert payload["retryable"] is False
+
+    asyncio.run(_run())
+
+
+def test_runtime_allows_load_tool_guide_reuse_with_different_arguments():
+    async def _run():
+        plugin = SimpleNamespace(
+            settings=SimpleNamespace(
+                agent=SimpleNamespace(
+                    max_steps=4,
+                    max_tool_calls_per_turn=1,
+                    max_tool_calls_total=1,
+                    max_evidence_chars=120,
+                )
+            ),
+            api=SimpleNamespace(ai=object()),
+        )
+        registry = _LargePayloadRegistry()
+        runtime = AgentRuntime(
+            plugin,
+            registry=registry,
+            model_runner=_SequencedToolAdapter(
+                [
+                    {
+                        "kind": "tool",
+                        "name": "load_tool_guide",
+                        "arguments": {"tool_name": "terminate"},
+                    },
+                    {
+                        "kind": "tool",
+                        "name": "load_tool_guide",
+                        "arguments": {"tool_name": "load_context"},
+                    },
                     {"kind": "tool", "name": "load_context", "arguments": {}},
                     {"kind": "final", "text": "done"},
                 ]

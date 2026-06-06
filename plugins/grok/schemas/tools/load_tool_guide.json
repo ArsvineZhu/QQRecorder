@@ -10,7 +10,7 @@
   "required": [
     "tool_name"
   ],
-  "description": "加载某个工具的完整说明，包括用途、适用场景、边界和参数提示。",
+  "description": "【优先使用，不消耗工具额度】加载某个工具的完整说明，包括用途、适用场景、边界和参数提示。",
   "x-prompt": {
     "summary": "加载某个工具的完整说明",
     "usage": [
@@ -25,5 +25,10 @@
       "它只返回工具说明，不会替你执行该工具",
       "tool_name 必须与可用工具名完全一致，写错会失败"
     ]
+  },
+  "x-tool-meta": {
+    "full_exposure": true,
+    "counts_against_budget": false,
+    "same_arguments_limit": "per_agent_run"
   }
 }

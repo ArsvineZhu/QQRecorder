@@ -3,7 +3,10 @@
   "additionalProperties": false,
   "properties": {
     "message_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "含合并转发的消息 ID。默认为当前消息。传空或不传自动取当前消息。"
     }
   },
@@ -23,5 +26,10 @@
       "如果转发里有未分析的图片或视频，不要假装看到了细节",
       "如果问题不依赖转发内容，不要为了调工具而展开"
     ]
+  },
+  "x-tool-meta": {
+    "full_exposure": false,
+    "counts_against_budget": true,
+    "same_arguments_limit": "per_agent_run"
   }
 }

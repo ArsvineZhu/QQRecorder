@@ -45,7 +45,7 @@
             "只有在你明确需要为一个还没有档案的用户建档时再调用",
             "适合用户明确要求记住长期偏好，但当前还没有档案的场景"
         ],
-    "guidance": [
+        "guidance": [
             "只有在确定要记住长期信息时再建档",
             "如果只是更新已有偏好，改用 update_profile"
         ],
@@ -55,5 +55,10 @@
             "不要把一次随口的话直接当成长期设定",
             "如果用户只是临时表达当下情绪，不要急着建档"
         ]
+    },
+    "x-tool-meta": {
+        "full_exposure": false,
+        "counts_against_budget": true,
+        "same_arguments_limit": "per_agent_run"
     }
 }

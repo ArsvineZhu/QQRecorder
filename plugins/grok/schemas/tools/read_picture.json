@@ -3,7 +3,10 @@
   "additionalProperties": false,
   "properties": {
     "message_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "包含图片的消息 ID。默认分析当前消息中的第一张图片。如果回复了一条带图片的消息，传那消息的 ID。"
     }
   },
@@ -24,5 +27,10 @@
       "没有视觉分析就不要假装看到了图",
       "对梗图含义、人物情绪、立场和动机判断要保守"
     ]
+  },
+  "x-tool-meta": {
+    "full_exposure": false,
+    "counts_against_budget": true,
+    "same_arguments_limit": "per_agent_run"
   }
 }

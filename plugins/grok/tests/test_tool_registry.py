@@ -177,6 +177,7 @@ def test_tool_registry_strips_internal_prompt_metadata_from_model_schema():
     exposed = registry.list_for_model()[0]["function"]["parameters"]
 
     assert "x-prompt" not in exposed
+    assert "x-tool-meta" not in exposed
     assert (
         exposed["properties"]["message_id"]["description"] == "Message ID to inspect."
     )
@@ -192,6 +193,10 @@ def test_load_tool_guide_tool_returns_full_guidance_for_one_tool():
         assert result.data["tool_name"] == "terminate"
         assert "静默结束本轮 Agent" in result.data["summary"]
         assert any("不会发送任何消息" in item for item in result.data["boundaries"])
+        assert result.data["policy"]["full_exposure"] is True
+        assert result.data["policy"]["counts_against_budget"] is False
+        assert result.data["policy"]["same_arguments_limit"] == "per_agent_run"
+        assert any("不消耗工具调用额度" in item for item in result.data["policy_hints"])
 
     asyncio.run(_run())
 
@@ -221,11 +226,21 @@ def test_all_tool_schemas_expose_complete_prompt_guidance_without_impl_leaks():
 
     for tool_name, payload in _tool_schema_payloads():
         meta = payload.get("x-prompt", {}) or {}
+        tool_meta = payload.get("x-tool-meta", {}) or {}
 
         assert meta.get("summary"), f"{tool_name} missing x-prompt.summary"
         assert meta.get("usage"), f"{tool_name} missing x-prompt.usage"
         assert meta.get("guidance"), f"{tool_name} missing x-prompt.guidance"
         assert meta.get("boundaries"), f"{tool_name} missing x-prompt.boundaries"
+        assert "full_exposure" in tool_meta, (
+            f"{tool_name} missing x-tool-meta.full_exposure"
+        )
+        assert "counts_against_budget" in tool_meta, (
+            f"{tool_name} missing x-tool-meta.counts_against_budget"
+        )
+        assert tool_meta.get("same_arguments_limit") in {"none", "per_agent_run"}, (
+            f"{tool_name} has invalid x-tool-meta.same_arguments_limit"
+        )
 
         text_parts = [str(payload.get("description", "") or "")]
         for prop in (payload.get("properties", {}) or {}).values():

@@ -16,7 +16,7 @@
         "usage": [
             "只有当用户明确要求清空或重置自己的长期设定时再调用"
         ],
-    "guidance": [
+        "guidance": [
             "先确认用户是在要求重置整体设定，而不是只想改某个字段",
             "重置后会回到默认档案，而不是保持之前的个性化内容"
         ],
@@ -25,5 +25,10 @@
             "如果只是想修改称呼或风格，改用 update_profile",
             "重置后默认档案仍然存在，不要把它理解成彻底失去这个用户记录"
         ]
+    },
+    "x-tool-meta": {
+        "full_exposure": false,
+        "counts_against_budget": true,
+        "same_arguments_limit": "per_agent_run"
     }
 }

@@ -3,7 +3,10 @@
   "additionalProperties": false,
   "properties": {
     "message_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "包含视频的消息 ID。默认分析当前消息中的第一个视频。"
     }
   },
@@ -23,5 +26,10 @@
       "没有视频分析就不要假装看过视频",
       "视频分析耗时更长，不要轻易重复调用"
     ]
+  },
+  "x-tool-meta": {
+    "full_exposure": false,
+    "counts_against_budget": true,
+    "same_arguments_limit": "per_agent_run"
   }
 }
