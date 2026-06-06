@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import html
+import json
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -166,6 +169,31 @@ def parse_forward_response(
         messages = response_data.messages
     else:
         messages = response_data.get("messages", [])
+    normalized = []
+    for item in messages:
+        coerced = _coerce_forward_message_item(item)
+        if coerced is not None:
+            normalized.append(coerced)
+    return parse_forward_nodes(normalized, depth=0, max_depth=max_depth)
+
+
+def parse_forward_embed(encoded_content: str, max_depth: int = 10) -> list[ForwardNode]:
+    """Fallback: parse embedded forward content from CQ code when API fails.
+
+    The CQ forward segment carries URL-encoded + HTML-encoded JSON of the
+    messages array.  This decoder handles that so inner/nested forwards
+    that ``get_forward_msg`` rejects can still yield text content.
+    """
+    try:
+        decoded_url = urllib.parse.unquote(encoded_content)
+        decoded_html = html.unescape(decoded_url)
+        messages = json.loads(decoded_html)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+
+    if not isinstance(messages, list):
+        return []
+
     normalized = []
     for item in messages:
         coerced = _coerce_forward_message_item(item)

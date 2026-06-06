@@ -186,6 +186,48 @@ def extract_forward_ids(segments: list[dict], raw_message: str = "") -> list[str
     return list(dict.fromkeys(forward_ids))
 
 
+def extract_forward_embeds(segments: list[dict]) -> dict[str, str]:
+    """Extract embedded forward content from segments for fallback parsing."""
+    embeds = {}
+    for seg in segments:
+        if seg["type"] == "forward":
+            fwd_id = seg["data"].get("id", "").strip()
+            content = seg["data"].get("content", "")
+            # Only string content (URL+HTML-encoded JSON) goes to embed
+            # fallback.  List content means NapCat already decoded the
+            # inline node list — handled by extract_inline_forward_nodes.
+            if fwd_id and isinstance(content, str) and content:
+                embeds[fwd_id] = content
+    return embeds
+
+
+def extract_inline_forward_nodes(segments: list[dict]) -> list[dict]:
+    """Extract inline forwarded message nodes from the event message array.
+
+    Two representations are handled by newer NapCat:
+
+    * Separate ``type: "node"`` segments alongside ``type: "forward"``.
+    * ``data.content`` inside a ``type: "forward"`` segment that is already a
+      decoded Python list of node dicts (the content field NapCat serializes as
+      ``[object Object]`` in the CQ text, but provides as a proper list in the
+      structured segment data).
+    """
+    nodes: list[dict] = []
+    for seg in segments:
+        if seg.get("type") == "node":
+            nodes.append(seg)
+            continue
+        if seg.get("type") == "forward":
+            content = seg.get("data", {}).get("content")
+            if isinstance(content, list):
+                nodes.extend(
+                    item
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "node"
+                )
+    return nodes
+
+
 def extract_app_shares(segments: list[dict]) -> list[AppShareInfo]:
     """Extract metadata from QQ JSON/app share segments.
 

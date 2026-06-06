@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from pathlib import Path
@@ -29,6 +30,7 @@ class QQRecorderPlugin(NcatBotPlugin):
         self._backup_manager: BackupManager | None = None
 
     async def on_load(self) -> None:
+        _install_line_safe_logging()
         settings = build_config(self.config)
 
         db_path = settings.storage.database
@@ -135,3 +137,40 @@ def _resolve_bot_uin() -> str:
     text = config_path.read_text(encoding="utf-8", errors="ignore")
     match = re.search(r"^bot_uin:\s*['\"]?(\d+)['\"]?\s*$", text, re.MULTILINE)
     return match.group(1) if match else ""
+
+
+def _install_line_safe_logging() -> None:
+    """Wrap root handlers' formatters to escape newlines in log output.
+
+    Third-party loggers (NapCat adapter etc.) may emit messages containing
+    literal newlines, breaking single-line log formats.  We wrap each root
+    handler's formatter so the *final* formatted string is escaped — this is
+    more reliable than a Filter because it runs after all %-expansion.
+    """
+    root = logging.getLogger()
+    for handler in root.handlers:
+        fmt = getattr(handler, "formatter", None)
+        if fmt is not None and not getattr(fmt, "_line_safe", False):
+            handler.setFormatter(_LineSafeFormatter(fmt))
+
+
+class _LineSafeFormatter(logging.Formatter):
+    """Delegates formatting to *wrapped* then escapes newlines."""
+
+    def __init__(self, wrapped: logging.Formatter):
+        super().__init__()
+        self._wrapped = wrapped
+        self._line_safe = True  # marker to avoid double-wrapping
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = self._wrapped.format(record)
+        return text.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        return self._wrapped.formatTime(record, datefmt)
+
+    def formatException(self, ei) -> str:
+        return self._wrapped.formatException(ei)
+
+    def formatStack(self, stack_info: str) -> str:
+        return self._wrapped.formatStack(stack_info)

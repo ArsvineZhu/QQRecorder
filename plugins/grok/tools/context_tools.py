@@ -221,6 +221,35 @@ def _extract_forward_handler(plugin):
                 status="ok",
                 data={"forward_messages": [], "source": "recorder"},
             )
+
+        # The forward message's QQ message_id equals the forward_id.
+        # The recorder may have already stored it with parsed inline
+        # nodes — try the DB before calling the (usually-failing) API.
+        fwd_message = await plugin._bridge.get_message(forward_id)
+        if fwd_message is not None:
+            fwd_children = getattr(fwd_message, "forward_messages", []) or []
+            if fwd_children:
+                items = [
+                    {
+                        "id": getattr(item, "id", None),
+                        "depth": (getattr(item, "depth", 0) or 0),
+                        "nickname": str(getattr(item, "nickname", "") or ""),
+                        "content_summary": (getattr(item, "content_summary", "") or ""),
+                        "forward_id": str(getattr(item, "forward_id", "") or ""),
+                    }
+                    for item in fwd_children
+                ]
+                logger.info(
+                    "extract_forward db_forward_lookup message_id=%s forward_id=%s forward_count=%d",  # noqa: E501
+                    getattr(message, "message_id", ""),
+                    forward_id,
+                    len(items),
+                )
+                return ToolResponse(
+                    status="ok",
+                    data={"forward_messages": items, "source": "recorder"},
+                )
+
         logger.info(
             "extract_forward api_fallback_start message_id=%s forward_id=%s",
             getattr(message, "message_id", ""),

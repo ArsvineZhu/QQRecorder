@@ -101,7 +101,7 @@ async def _run_image_analysis_race(db_path: Path):
 
     real_session = storage._session
     state = _RaceState()
-    storage._session = lambda: _RaceSessionContext(real_session, state)
+    storage._session = lambda: _RaceSessionContext(real_session, state)  # type: ignore[assignment]
 
     await asyncio.gather(
         storage.save_image_analysis(

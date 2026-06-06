@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 class GrokPlugin(NcatBotPlugin):
     name = "grok"
-    version = "1.4.0"
+    version = "1.4.1beta"
     author = "Arsvine Zhu"
     description = "基于单 Agent 工具调用的独立回复插件"
 

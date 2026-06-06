@@ -4,35 +4,30 @@ All notable changes to QQContextBot are documented here.
 
 ## Unreleased
 
-- **New plugin `grok`**: Full-featured multi-turn Agent reply plugin with 9 tools,
-  JSON profile store, thinking mode, ban detection, and vision result persistence.
-  Renamed from `qq_agent_reply`.
-- **`ImageAnalysis` table** in recorder DB: permanent storage for image/video AI
-  interpretation results, also used for `system_notice` records (ban/unban events).
-- **Forward parser upgrade**: Non-text segments (image, video, face, at, reply, etc.)
-  now produce descriptive labels `[图片]`, `[视频]`, `[@xxx]` etc. in `content_summary`.
-- **Config refactored to `config/` package**: Flat `config.py`/`config_schema.py`/
-  `config_validation.py` → `config/__init__.py`/`schema.py`/`builder.py`/`validation.py`.
-- **User profile moved to JSON file**: Profiles stored in `data/profiles.json`,
-  removed `profile.users` from YAML config + old `AgentProfileStore` SQLite.
-- **`ProfileUserConfig` removed** from `config/schema.py`.
-- **Profile tools expanded**: `create_profile`, `update_profile`, `delete_profile` added.
-  `load_profile` auto-creates blank profiles for new users on first contact.
-- **`handle_group_ban()`** in `app/ban_handler.py`: bot mute/unmute events → profile mute
-  state + recorder `image_analyses` system notice.
-- **Thinking mode**: `thinking_enabled` + `thinking_effort` in model config. Passes
-  `extra_body={"thinking": {"type": "enabled"}}` + `reasoning_effort`.
-- **Runtime logging**: Added structured `logger.info` to `trigger/rules.py`,
-  `app/orchestrator.py`, `app/runtime.py`, `agent/model_adapter.py`.
-- **`extract_forward`** now reads from recorder DB only (live `get_forward_msg` API is
-  unreliable for expired messages).
-- **`read_picture` fix**: Fresh-reloads the message from DB before reading image bytes
-  (fixes stale `local_path` issue). Also attaches `message_text` in the response.
-- **`MessageStorage.save_image_analysis()`** and `get_image_analysis()` added to recorder
-  storage layer.
-- **`RecorderBridge`** exposes `save_analysis()` / `get_analysis()` helpers.
-- **Pyright clean**: All `# type: ignore` removed, zero errors project-wide.
-- **`CLAUDE.md`** rewritten to match actual codebase.
+- **`qq_grok_reply` removed**: Plugin fully deleted. `backfill.py` fallback import updated
+  to prefer `grok` schemas with graceful ImportError fallback.
+- **Forward parser 3-tier fallback**: `get_forward_msg` → CQ embedded JSON content
+  (`parse_forward_embed`) → inline `type: "node"` segments in event message array
+  (`extract_inline_forward_nodes`). Handles new NapCat behavior where `content` is
+  `[object Object]` but actual node data is available as a list in `segment.data.content`.
+- **Grok `extract_forward` DB-first**: Before calling the failing API, now looks up the
+  forward message by `forward_id` directly via `bridge.get_message()`.
+- **Orchestrator fast gate**: Messages without a `reply` segment skip the 5-second
+  `wait_until_visible()` loop entirely when prefilter rejects.
+- **Line-safe logging**: `_LineSafeFormatter` wraps all root handler formatters at boot,
+  escaping `\n` in every log output. NapCat adapter lines are now single-line.
+- **Log preview escaping**: `model_adapter.py` text-response preview uses
+  `text[:120].replace("\n", "\\n")`. `events.py` `format_stored_log` escapes newlines
+  after truncation.
+- **Profile data relocation**: Profiles moved from `data/qq_agent_reply/data/profiles.json`
+  to `data/grok/profiles.json`. Config `profile.db_path` updated to
+  `../../data/grok/profiles.json`.
+- **Pyright clean**: All pyright errors in the project fixed — test mock `type: ignore`,
+  `prompt_synthesizer` test assertions, backfill import fallback.
+- **130 tests passing**: All previous test regressions (prompt template assertions,
+  backfill module) resolved.
+- **`CLAUDE.md` fully rewritten**: Removed all references to `qq_grok_reply`, updated tool
+  count, structure, profile path, data flow, conventions, and anti-patterns.
 
 ## 1.5.1 - 2026-05-22
 

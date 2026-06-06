@@ -40,6 +40,6 @@ def test_prompt_synthesizer_keeps_existing_rendering_behavior():
 
     messages = build_model_messages(working_context, settings)
 
-    assert "你的 QQ/self_id：`10000`" in messages[0]["content"]
+    assert "你的 ID：`10000`" in messages[0]["content"]
     assert "# 本轮回复任务" in messages[1]["content"]
     assert "## 要回答的用户消息" in messages[1]["content"]

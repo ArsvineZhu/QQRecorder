@@ -5,6 +5,8 @@ import json
 import logging
 import time
 
+from ncatbot.types import Reply as MessageReply
+
 from ..delivery import SendOutcome, send_reply
 from ..profile_defaults import build_default_profile
 from ..shared.conversation_history import trim_transcript_turns
@@ -25,6 +27,14 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
     if bridge is None or trace_store is None or plugin._runtime is None:
         logger.warning("handle: bridge/trace/runtime not initialized")
         return
+
+    # Quick gate: if prefilter already rejected and the message has no
+    # reply segment, the reply-to-bot path can never match — skip the
+    # expensive read-after-write wait entirely.
+    if prefilter_reason is None and plugin.settings.trigger.allow_reply_to_bot:
+        if not _has_reply_segment(event):
+            logger.debug("handle: prefilter rejected, no reply segment")
+            return
 
     started_at = time.perf_counter()
     message_id = str(getattr(event, "message_id", "") or "")
@@ -207,3 +217,14 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
 def _decision_seed(event) -> str:
     key = f"{getattr(event, 'message_id', '')}:{getattr(event, 'time', '')}"
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+
+
+def _has_reply_segment(event) -> bool:
+    """Check if the event has a ``reply`` segment without blocking on DB."""
+    message = getattr(event, "message", None)
+    if message is None or not hasattr(message, "filter"):
+        return False
+    try:
+        return any(True for _ in message.filter(MessageReply))
+    except Exception:
+        return False

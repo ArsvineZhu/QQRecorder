@@ -97,7 +97,11 @@ async def run_agent_turn(
                 str(type(response)),
             )
     else:
-        logger.info("model: text response len=%d text=%s", len(text), text[:120])
+        logger.info(
+            "model: text response len=%d text=%s",
+            len(text),
+            text[:120].replace("\n", "\\n"),
+        )  # noqa: E501
 
     request_id = str(
         getattr(working_context, "llm_request_id", "") or uuid.uuid4().hex[:12]

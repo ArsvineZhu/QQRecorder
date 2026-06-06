@@ -336,14 +336,25 @@ def _import_renderers():
     if project_dir not in sys.path:
         sys.path.insert(0, project_dir)
 
-    from plugins.qq_grok_reply.vision.schemas import (  # noqa: PLC0415
-        normalize_analysis,
-        render_visual_context,
-    )
-    from plugins.qq_grok_reply.vision.video_schemas import (  # noqa: PLC0415
-        normalize_video_analysis,
-        render_video_context,
-    )
+    # Try grok plugin first, fall back to the deleted qq_grok_reply.
+    try:
+        from plugins.grok.vision.schemas import (  # noqa: PLC0415
+            normalize_analysis,
+            render_visual_context,
+        )
+        from plugins.grok.vision.video_schemas import (  # noqa: PLC0415
+            normalize_video_analysis,
+            render_video_context,
+        )
+    except ImportError:
+        from plugins.qq_grok_reply.vision.schemas import (  # type: ignore[import-unused]  # noqa: PLC0415
+            normalize_analysis,
+            render_visual_context,
+        )
+        from plugins.qq_grok_reply.vision.video_schemas import (  # type: ignore[import-unused]  # noqa: PLC0415
+            normalize_video_analysis,
+            render_video_context,
+        )
 
     return (
         normalize_analysis,

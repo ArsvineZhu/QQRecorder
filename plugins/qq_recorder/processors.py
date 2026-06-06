@@ -8,9 +8,20 @@ from typing import Any
 
 from .config import RecorderSettings
 from .events import format_stored_log, is_command
-from .forward_parser import flatten_forward_nodes, parse_forward_response
+from .forward_parser import (
+    ForwardNode,
+    flatten_forward_nodes,
+    parse_forward_embed,
+    parse_forward_nodes,
+    parse_forward_response,
+)
 from .image_handler import process_images
-from .message_parser import ImageInfo, parse_message
+from .message_parser import (
+    ImageInfo,
+    extract_forward_embeds,
+    extract_inline_forward_nodes,
+    parse_message,
+)
 from .storage import MessageStorage
 from .text_utils import escape_text
 from .video_handler import process_videos
@@ -63,7 +74,11 @@ class MessageProcessor:
                     return None
 
                 parsed = parse_message(event.get("message", []), raw)
-                forward_messages = await self._process_forwards(parsed.forward_ids)
+                forward_embeds = extract_forward_embeds(event.get("message", []))
+                inline_nodes = extract_inline_forward_nodes(event.get("message", []))
+                forward_messages = await self._process_forwards(
+                    parsed.forward_ids, forward_embeds, inline_nodes
+                )
 
                 message_data = {
                     "message_id": event["message_id"],
@@ -140,7 +155,12 @@ class MessageProcessor:
                 self.logger.error("Error processing message: %s", e, exc_info=True)
                 return None
 
-    async def _process_forwards(self, forward_ids: list[str]) -> list[dict]:
+    async def _process_forwards(
+        self,
+        forward_ids: list[str],
+        forward_embeds: dict[str, str] | None = None,
+        inline_nodes: list[dict] | None = None,
+    ) -> list[dict]:
         """Fetch and parse forward messages by their IDs."""
         if not self.settings.forward.parse_content:
             return [
@@ -152,22 +172,55 @@ class MessageProcessor:
             if not forward_id or not forward_id.strip():
                 continue
             try:
-                response = await self.api.qq.query.get_forward_msg(forward_id)
-                nodes = parse_forward_response(
-                    response, max_depth=self.settings.forward.max_depth
-                )
-                flattened = flatten_forward_nodes(nodes)
-                response_shape = type(response).__name__
-                if isinstance(response, dict):
-                    response_shape = ",".join(
-                        sorted(str(key) for key in response.keys())
+                nodes: list[ForwardNode] = []
+                try:
+                    response = await self.api.qq.query.get_forward_msg(forward_id)
+                    nodes = parse_forward_response(
+                        response, max_depth=self.settings.forward.max_depth
                     )
-                self.logger.info(
-                    "Forward parsed forward_id=%s response_shape=%s flatten_count=%d",
-                    forward_id,
-                    response_shape,
-                    len(flattened),
-                )
+                    response_shape = type(response).__name__
+                    if isinstance(response, dict):
+                        response_shape = ",".join(
+                            sorted(str(key) for key in response.keys())
+                        )
+                    self.logger.info(
+                        "Forward parsed forward_id=%s response_shape=%s flatten_count=%d",  # noqa: E501
+                        forward_id,
+                        response_shape,
+                        len(nodes),
+                    )
+                except Exception as e:
+                    # Fallback 1: parse embedded content from CQ code
+                    embeds = forward_embeds or {}
+                    embed = embeds.get(forward_id, "")
+                    if embed:
+                        nodes = parse_forward_embed(
+                            embed, max_depth=self.settings.forward.max_depth
+                        )
+                        self.logger.info(
+                            "Forward parsed via embed forward_id=%s flatten_count=%d",  # noqa: E501
+                            forward_id,
+                            len(nodes),
+                        )
+                    else:
+                        # Fallback 2: inline node segments in event.message
+                        inline = inline_nodes or []
+                        if inline:
+                            nodes = parse_forward_nodes(
+                                inline,
+                                depth=0,
+                                max_depth=self.settings.forward.max_depth,  # noqa: E501
+                            )
+                            self.logger.info(  # noqa: E501
+                                "Forward parsed via inline nodes forward_id=%s flatten_count=%d",  # noqa: E501
+                                forward_id,
+                                len(nodes),
+                            )
+                        else:
+                            self.logger.warning(
+                                "Forward parse failed for %s: %s", forward_id, e
+                            )
+                flattened = flatten_forward_nodes(nodes)
                 all_forwards.extend(flattened)
             except Exception as e:
                 self.logger.warning("Forward parse failed for %s: %s", forward_id, e)
