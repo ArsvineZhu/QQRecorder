@@ -9,7 +9,7 @@ from typing import Any
 
 import aiohttp
 
-from ..infra import save_analysis
+from ..infra import get_analysis, save_analysis
 from ..shared import load_schema
 from ..vision.analyzer import analyze_image
 from ..vision.image_prep import prepare_for_api
@@ -83,6 +83,22 @@ def _read_picture_handler(plugin):
             str(getattr(image, "file_unique", "") or "")
             or hashlib.md5(image_bytes).hexdigest()
         )
+        model_used = plugin.settings.vision.image_fast_model
+
+        cached = await get_analysis(plugin._bridge, file_unique, model_used=model_used)
+        if cached:
+            payload = json.loads(cached)
+            msg_text = str(getattr(message, "raw_message", "") or "")
+            payload["message_text"] = msg_text[:600]
+            _log_cache_event(
+                plugin,
+                media_type="image",
+                file_unique=file_unique,
+                model_used=model_used,
+                cache_hit=True,
+                semantic_text=payload.get("semantic_text", ""),
+            )
+            return ToolResponse(status="ok", data=payload)
 
         quota = getattr(plugin, "_vision_quota", None)
         user_id: str | None = None
@@ -114,6 +130,14 @@ def _read_picture_handler(plugin):
             image_id=getattr(image, "id", None),
             semantic_text=semantic_text,
             message_db_id=getattr(message, "id", None),
+        )
+        _log_cache_event(
+            plugin,
+            media_type="image",
+            file_unique=file_unique,
+            model_used=model_used,
+            cache_hit=False,
+            semantic_text=semantic_text,
         )
         # Attach the message text alongside image analysis
         msg_text = str(getattr(message, "raw_message", "") or "")
@@ -162,6 +186,20 @@ def _read_video_handler(plugin):
         file_unique = hashlib.sha1(
             f"{video['url']}|{video['local_path']}".encode()
         ).hexdigest()
+        model_used = plugin.settings.vision.video_summary_model
+
+        cached = await get_analysis(plugin._bridge, file_unique, model_used=model_used)
+        if cached:
+            payload = json.loads(cached)
+            _log_cache_event(
+                plugin,
+                media_type="video",
+                file_unique=file_unique,
+                model_used=model_used,
+                cache_hit=True,
+                semantic_text=payload.get("semantic_text", ""),
+            )
+            return ToolResponse(status="ok", data=payload)
 
         quota = getattr(plugin, "_vision_quota", None)
         user_id: str | None = None
@@ -195,6 +233,14 @@ def _read_video_handler(plugin):
             semantic_text=semantic_text,
             video_id=video.get("id"),
             message_db_id=getattr(message, "id", None),
+        )
+        _log_cache_event(
+            plugin,
+            media_type="video",
+            file_unique=file_unique,
+            model_used=model_used,
+            cache_hit=False,
+            semantic_text=semantic_text,
         )
         return ToolResponse(
             status="ok" if not analysis.error_code else "failed",
@@ -368,4 +414,60 @@ async def _persist_analysis(
         image_id=image_id,
         video_id=video_id,
         message_db_id=message_db_id,
+    )
+    _log_persist_event(
+        plugin,
+        media_type=media_type,
+        file_unique=file_unique,
+        model_used=(
+            vision.image_fast_model
+            if media_type == "image"
+            else vision.video_summary_model
+        ),
+        semantic_text=semantic_text,
+    )
+
+
+def _log_cache_event(
+    plugin,
+    *,
+    media_type: str,
+    file_unique: str,
+    model_used: str,
+    cache_hit: bool,
+    semantic_text: str,
+) -> None:
+    logger = getattr(plugin, "logger", None)
+    if logger is None or not hasattr(logger, "info"):
+        return
+    logger.info(
+        "vision read_%s file_unique=%s model=%s cache_hit=%s semantic_text_chars=%d",
+        media_type,
+        file_unique,
+        model_used,
+        cache_hit,
+        len(str(semantic_text or "")),
+    )
+
+
+def _log_persist_event(
+    plugin,
+    *,
+    media_type: str,
+    file_unique: str,
+    model_used: str,
+    semantic_text: str,
+) -> None:
+    logger = getattr(plugin, "logger", None)
+    if logger is None or not hasattr(logger, "info"):
+        return
+    logger.info(
+        (
+            "vision save_%s file_unique=%s model=%s"
+            " analysis_saved=true semantic_text_chars=%d"
+        ),
+        media_type,
+        file_unique,
+        model_used,
+        len(str(semantic_text or "")),
     )

@@ -147,6 +147,7 @@ def test_agent_runtime_registry_exposes_terminate_and_load_tool_guide_tools():
 
     assert "terminate" in tool_names
     assert "load_tool_guide" in tool_names
+    assert "query_chat_history" in tool_names
 
 
 def test_tool_registry_strips_internal_prompt_metadata_from_model_schema():

@@ -26,6 +26,7 @@ class AgentReplyTrace(Base):
     context_version: Mapped[str] = mapped_column(String, default="v1")
     profile_version: Mapped[str] = mapped_column(String, default="v1")
     working_context_json: Mapped[str] = mapped_column(Text, default="{}")
+    diagnostics_json: Mapped[str] = mapped_column(Text, default="[]")
     model_name: Mapped[str] = mapped_column(String, default="")
     response_text: Mapped[str] = mapped_column(Text, default="")
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
@@ -34,6 +35,19 @@ class AgentReplyTrace(Base):
     sent_message_id: Mapped[str | None] = mapped_column(String, nullable=True)
     sent_parts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+
+class AgentConversationSession(Base):
+    __tablename__ = "agent_conversation_sessions"
+
+    chat_type: Mapped[str] = mapped_column(String, primary_key=True)
+    chat_id: Mapped[str] = mapped_column(String, primary_key=True)
+    messages_json: Mapped[str] = mapped_column(Text, default="[]")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class AgentProfileSnapshot(Base):

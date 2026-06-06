@@ -5,8 +5,11 @@ import json
 import logging
 import time
 
+from ncatbot.types import Reply as MessageReply
+
 from ..delivery import SendOutcome, send_reply
 from ..profile_defaults import build_default_profile
+from ..shared.conversation_history import trim_transcript_turns
 from ..trigger import final_decision, prefilter_event
 
 logger = logging.getLogger("grok.orchestrator")
@@ -24,6 +27,14 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
     if bridge is None or trace_store is None or plugin._runtime is None:
         logger.warning("handle: bridge/trace/runtime not initialized")
         return
+
+    # Quick gate: if prefilter already rejected and the message has no
+    # reply segment, the reply-to-bot path can never match — skip the
+    # expensive read-after-write wait entirely.
+    if prefilter_reason is None and plugin.settings.trigger.allow_reply_to_bot:
+        if not _has_reply_segment(event):
+            logger.debug("handle: prefilter rejected, no reply segment")
+            return
 
     started_at = time.perf_counter()
     message_id = str(getattr(event, "message_id", "") or "")
@@ -81,6 +92,15 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
 
     # Automatically create a blank profile for new users
     profile_store = getattr(plugin, "_profile_json_store", None)
+    if profile_store is not None and hasattr(profile_store, "observe_user"):
+        await profile_store.observe_user(
+            user_id_str,
+            chat_type=str(getattr(source_msg, "chat_type", "") or ""),
+            chat_id=chat_id_str,
+            sender_nickname=str(getattr(source_msg, "sender_nickname", "") or ""),
+            sender_card=str(getattr(source_msg, "sender_card", "") or ""),
+            observed_at=str(getattr(source_msg, "timestamp", "") or ""),
+        )
     if profile_store is not None:
         existing = await profile_store.get_profile(user_id_str)
         if existing is None:
@@ -133,6 +153,45 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
             plugin.api, event, outcome.text, plugin.settings
         )
 
+    diagnostics = list(getattr(outcome, "diagnostics", []) or [])
+    conversation_store = getattr(plugin, "_conversation_store", None)
+    if (
+        conversation_store is not None
+        and send_outcome.sent
+        and outcome.text
+        and outcome.transcript_turns
+    ):
+        try:
+            conversation_store = getattr(plugin, "_conversation_store", None)
+            if conversation_store is None:
+                raise RuntimeError("conversation store unavailable")
+            agent_settings = getattr(plugin.settings, "agent", None)
+            max_messages = int(
+                getattr(agent_settings, "conversation_history_max_messages", 20) or 20
+            )
+            trimmed_turns = trim_transcript_turns(
+                outcome.transcript_turns,
+                max_messages=max_messages,
+            )
+            await conversation_store.upsert_session(
+                str(getattr(source_msg, "chat_type", "") or ""),
+                chat_id_str,
+                trimmed_turns,
+            )
+        except Exception as exc:
+            logger.warning("handle: conversation persist failed: %s", exc)
+            diagnostics.append(
+                {
+                    "kind": "conversation_persist",
+                    "code": "conversation_persist_failed",
+                    "message": str(exc),
+                    "metadata": {
+                        "chat_type": str(getattr(source_msg, "chat_type", "") or ""),
+                        "chat_id": chat_id_str,
+                    },
+                }
+            )
+
     await trace_store.finish_trace(
         trace_id,
         model_name=outcome.model_name,
@@ -142,6 +201,7 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
         sent_message_id=send_outcome.sent_message_id,
         sent_parts=send_outcome.sent_parts,
         latency_ms=int((time.perf_counter() - started_at) * 1000),
+        diagnostics_json=json.dumps(diagnostics, ensure_ascii=False),
     )
 
     latency = int((time.perf_counter() - started_at) * 1000)
@@ -157,3 +217,14 @@ async def handle_event(plugin, event, chat_type: str) -> None:  # noqa: C901
 def _decision_seed(event) -> str:
     key = f"{getattr(event, 'message_id', '')}:{getattr(event, 'time', '')}"
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+
+
+def _has_reply_segment(event) -> bool:
+    """Check if the event has a ``reply`` segment without blocking on DB."""
+    message = getattr(event, "message", None)
+    if message is None or not hasattr(message, "filter"):
+        return False
+    try:
+        return any(True for _ in message.filter(MessageReply))
+    except Exception:
+        return False

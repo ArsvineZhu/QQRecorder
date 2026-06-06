@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import pprint
+import uuid
 from dataclasses import dataclass, field
 
 from ..context.evidence import AgentToolCall
+from .llm_chain_logger import log_llm_chain, usage_from_response
 from .prompt import build_model_messages, render_working_context
 
 logger = logging.getLogger("grok.model")
@@ -96,10 +97,29 @@ async def run_agent_turn(
                 str(type(response)),
             )
     else:
-        logger.info("model: text response len=%d text=%s", len(text), text[:120])
+        logger.info(
+            "model: text response len=%d text=%s",
+            len(text),
+            text[:120].replace("\n", "\\n"),
+        )  # noqa: E501
 
-    # Log LLM chain if enabled (skip system prompt, skip reasoning_content)
-    _log_llm_chain(working_context, messages, tool_calls, text, settings)
+    request_id = str(
+        getattr(working_context, "llm_request_id", "") or uuid.uuid4().hex[:12]
+    )
+    step = int(getattr(working_context, "llm_step", 1) or 1)
+    source_message_id = str(getattr(working_context, "source_message_id", "") or "")
+    if settings.trace.log_llm_chain:
+        log_llm_chain(
+            request_id=request_id,
+            chat_type=str(getattr(working_context.context, "chat_type", "") or ""),
+            chat_id=str(getattr(working_context.context, "chat_id", "") or ""),
+            source_message_id=source_message_id,
+            step=step,
+            messages=messages,
+            response_text=text,
+            tool_calls=tool_calls,
+            usage=usage_from_response(response),
+        )
 
     response_summary = text or (
         "; ".join(call.name for call in tool_calls) if tool_calls else ""
@@ -279,74 +299,3 @@ def _update_budget_in_user_message(
                     content,
                 )
             break
-
-
-def _log_llm_chain(working_context, messages, tool_calls, text, settings) -> None:
-    """Log the full LLM input/output chain when log_llm_chain is enabled.
-
-    Skips the system prompt. Escapes user-facing text to avoid multi-line breakage.
-    """
-    if not settings.trace.log_llm_chain:
-        return
-
-    chain_logger = logging.getLogger("grok.llm_chain")
-    chain_logger.setLevel(logging.INFO)
-    if not chain_logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s.%(msecs)03d [grok.llm_chain] %(message)s",
-                datefmt="%H:%M:%S",
-            )
-        )
-        chain_logger.addHandler(handler)
-    chain_logger.propagate = False
-
-    # User message (skip system prompt at index 0)
-    user_msg = messages[1] if len(messages) > 1 else messages[-1]
-    user_content = str(user_msg.get("content", "") or "")
-    chain_logger.info("--- USER MESSAGE ---")
-    chain_logger.info("%s", pprint.pformat(user_content, width=120, compact=False))
-
-    # Tool calls
-    if tool_calls:
-        chain_logger.info("--- MODEL TOOL CALLS ---")
-        for tc in tool_calls:
-            chain_logger.info("  TOOL: %s", tc.name)
-            chain_logger.info("  ARGS:")
-            for line in pprint.pformat(tc.arguments, width=120, compact=False).split(
-                "\n"
-            ):
-                chain_logger.info("    %s", line)
-
-    # Tool results (evidence appended after previous round)
-    evidence = getattr(working_context, "evidence", None) or []
-    if evidence:
-        chain_logger.info("--- TOOL RESULTS ---")
-        for block in evidence:
-            _log_block(chain_logger, block)
-
-    # Model response text
-    if text:
-        chain_logger.info("--- MODEL RESPONSE ---")
-        chain_logger.info("%s", pprint.pformat(text, width=120, compact=False))
-
-
-def _log_block(chain_logger, block) -> None:
-    """Log a single evidence block (tool result or error) with indentation."""
-    label = block.label or ""
-    content = str(block.content or "")
-    if block.kind == "tool_error":
-        chain_logger.info("  ERROR [%s]:", label)
-        for line in content.split("\n"):
-            chain_logger.info("    %s", line)
-    else:
-        chain_logger.info("  [%s]:", label)
-        for line in content.split("\n"):
-            chain_logger.info("    %s", line[:500])
-
-
-def _escape_chain(text: str) -> str:
-    """Escape newlines and control chars for single-line log output."""
-    result = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    return result[:5000]

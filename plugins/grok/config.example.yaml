@@ -38,6 +38,7 @@ agent:
   max_tool_calls_per_turn: 3             # 每轮最多并行工具调用数
   max_tool_calls_total: 6                 # 单次回复最多执行工具调用数，防止工具循环超限
   max_evidence_chars: 6000               # 单条工具结果最大字符数（超出裁剪）
+  conversation_history_max_messages: 20  # 连续多轮对话保留的最近消息数（不含 system）
 
 # 提示词
 prompt:

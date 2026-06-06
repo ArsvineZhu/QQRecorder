@@ -21,6 +21,8 @@ def validate_config(settings: AgentPluginSettings) -> None:
         raise ValueError(
             "agent.max_tool_calls_total must be >= agent.max_tool_calls_per_turn"
         )
+    if settings.agent.conversation_history_max_messages <= 0:
+        raise ValueError("agent.conversation_history_max_messages must be > 0")
     if not str(settings.prompt.assistant_name or "").strip():
         raise ValueError("prompt.assistant_name must not be empty")
     if settings.prompt.context_message_preview_chars <= 0:

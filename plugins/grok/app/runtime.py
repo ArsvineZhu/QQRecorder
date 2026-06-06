@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import is_dataclass
 from typing import Any
 
+from ..agent.llm_chain_logger import validate_messages_for_chat_api
 from ..agent.model_adapter import run_agent_turn
 from ..context.evidence import (
     AgentOutcome,
@@ -15,8 +17,10 @@ from ..context.evidence import (
     EvidenceBlock,
 )
 from ..shared import load_tool_metadata, load_tool_schema_map
+from ..shared.conversation_history import build_initial_messages, build_transcript_turns
 from ..tools.context_tools import build_context_tools
 from ..tools.guide_tools import build_load_tool_guide_tool
+from ..tools.history_tools import build_history_tools
 from ..tools.media_tools import build_media_tools
 from ..tools.profile_tools import (
     build_create_profile_tool,
@@ -96,18 +100,41 @@ class AgentRuntime:
             ),
         )
         steps: list[AgentStep] = []
+        diagnostics: list[dict[str, Any]] = []
         total_tool_calls = 0
         max_tool_calls_total = working_context.tool_call_budget_total
         seen_track_reply_keys: set[tuple[str, int]] = set()
         seen_tool_argument_keys: set[tuple[str, str]] = set()
         self._messages_history = None
+        initial_messages = await self._build_initial_messages(
+            working_context=working_context
+        )
 
-        for _ in range(working_context.step_budget):
-            turn = await self._model_runner(
+        source_message = _source_message_payload(source_msg, event)
+        for step_index in range(1, working_context.step_budget + 1):
+            messages = self._merge_history(self._messages_history) or initial_messages
+            validation_diagnostics = validate_messages_for_chat_api(messages)
+            for item in validation_diagnostics:
+                diagnostics.append(
+                    {
+                        **item,
+                        "step": step_index,
+                        "metadata": {
+                            **(item.get("metadata", {}) or {}),
+                            "chat_type": working_context.context.chat_type,
+                            "chat_id": working_context.context.chat_id,
+                        },
+                    }
+                )
+            working_context.llm_request_id = uuid.uuid4().hex[:12]
+            working_context.llm_step = step_index
+            working_context.source_message_id = source_message["message_id"]
+            turn = await self._invoke_model(
                 working_context=working_context,
                 settings=self.plugin.settings,
                 registry=self.registry,
                 api=self.plugin.api,
+                messages=messages,
             )
 
             # First call returns the initial messages; subsequent calls reuse history
@@ -115,12 +142,18 @@ class AgentRuntime:
                 msgs = getattr(turn, "messages", None)
                 if msgs is not None:
                     self._messages_history = msgs
+                else:
+                    self._messages_history = list(initial_messages)
 
             # Append assistant response to history (preserves content,
             # reasoning_content, tool_calls for DeepSeek thinking mode)
             raw_msg = getattr(turn, "raw_assistant_message", None)
             if raw_msg is not None and self._messages_history is not None:
                 self._messages_history.append(raw_msg)
+            elif turn.text.strip() and self._messages_history is not None:
+                self._messages_history.append(
+                    {"role": "assistant", "content": turn.text.strip()}
+                )
 
             if not turn.tool_calls:
                 text = turn.text.strip()
@@ -133,6 +166,13 @@ class AgentRuntime:
                     steps=steps,
                     model_name=turn.model_name,
                     error_code=None,
+                    messages_history=self._messages_history,
+                    transcript_turns=build_transcript_turns(
+                        source_message=source_message,
+                        final_text=text,
+                        messages_history=self._messages_history,
+                    ),
+                    diagnostics=diagnostics,
                 )
 
             for tool_call in turn.tool_calls[
@@ -348,6 +388,8 @@ class AgentRuntime:
                                 tool_call.arguments,
                                 result,
                             ),
+                            messages_history=self._messages_history,
+                            diagnostics=diagnostics,
                         )
                 steps.append(step)
 
@@ -370,7 +412,44 @@ class AgentRuntime:
             steps=steps,
             model_name="",
             error_code="max_steps_exceeded",
+            messages_history=self._messages_history,
+            diagnostics=diagnostics,
         )
+
+    async def _build_initial_messages(self, *, working_context) -> list[dict]:
+        conversation_store = getattr(self.plugin, "_conversation_store", None)
+        transcript: list[dict] = []
+        if conversation_store is not None:
+            transcript = await conversation_store.get_session(
+                working_context.context.chat_type,
+                working_context.context.chat_id,
+            )
+        return build_initial_messages(
+            working_context,
+            self.plugin.settings,
+            transcript_turns=transcript,
+        )
+
+    async def _invoke_model(
+        self, *, working_context, settings, registry, api, messages=None
+    ):
+        try:
+            return await self._model_runner(
+                working_context=working_context,
+                settings=settings,
+                registry=registry,
+                api=api,
+                messages=messages,
+            )
+        except TypeError as exc:
+            if "unexpected keyword argument 'messages'" not in str(exc):
+                raise
+            return await self._model_runner(
+                working_context=working_context,
+                settings=settings,
+                registry=registry,
+                api=api,
+            )
 
     async def _run_model(
         self, *, working_context, settings, registry, api, messages=None
@@ -395,6 +474,8 @@ class AgentRuntime:
         registry = ToolRegistry()
         registry.register(build_load_tool_guide_tool(plugin))
         for tool in build_context_tools(plugin):
+            registry.register(tool)
+        for tool in build_history_tools(plugin):
             registry.register(tool)
         for tool in build_media_tools(plugin):
             registry.register(tool)
@@ -508,6 +589,41 @@ def _stable_argument_key(arguments: dict[str, Any]) -> str:
 
 def _chat_type(event) -> str:
     return "group" if getattr(event, "group_id", None) is not None else "private"
+
+
+def _source_message_payload(source_msg: Any, event: Any) -> dict[str, str]:
+    return {
+        "message_id": str(
+            getattr(source_msg, "message_id", "")
+            or getattr(event, "message_id", "")
+            or ""
+        ),
+        "timestamp": str(
+            getattr(source_msg, "timestamp", "") or getattr(event, "time", "") or ""
+        ),
+        "raw_message": str(
+            getattr(source_msg, "raw_message", "")
+            or getattr(event, "raw_message", "")
+            or ""
+        ),
+        "chat_type": str(getattr(source_msg, "chat_type", "") or _chat_type(event)),
+        "chat_id": str(
+            getattr(source_msg, "group_id", None)
+            or getattr(event, "group_id", None)
+            or getattr(source_msg, "user_id", "")
+            or getattr(event, "user_id", "")
+            or ""
+        ),
+        "user_id": str(
+            getattr(source_msg, "user_id", "") or getattr(event, "user_id", "") or ""
+        ),
+        "sender": str(
+            getattr(source_msg, "sender_card", "")
+            or getattr(source_msg, "sender_nickname", "")
+            or getattr(event, "user_id", "")
+            or ""
+        ),
+    }
 
 
 def _normalize_result_payload(

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import html
+import json
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -116,6 +119,30 @@ def parse_forward_nodes(
     return result
 
 
+def _coerce_forward_message_item(item: dict) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    if item.get("type") == "node":
+        return item
+
+    sender = item.get("sender", {}) or {}
+    content = item.get("content")
+    if content is None and isinstance(item.get("data"), dict):
+        content = item["data"].get("content")
+    if content is None:
+        return None
+
+    return {
+        "type": "node",
+        "data": {
+            "user_id": str(sender.get("user_id", "") or item.get("user_id", "")),
+            "nickname": str(sender.get("nickname", "") or item.get("nickname", "")),
+            "forward_id": str(item.get("forward_id", "") or ""),
+            "content": content,
+        },
+    }
+
+
 def flatten_forward_nodes(nodes: list[ForwardNode]) -> list[dict]:
     result: list[dict] = []
     for node in nodes:
@@ -142,4 +169,34 @@ def parse_forward_response(
         messages = response_data.messages
     else:
         messages = response_data.get("messages", [])
-    return parse_forward_nodes(messages, depth=0, max_depth=max_depth)
+    normalized = []
+    for item in messages:
+        coerced = _coerce_forward_message_item(item)
+        if coerced is not None:
+            normalized.append(coerced)
+    return parse_forward_nodes(normalized, depth=0, max_depth=max_depth)
+
+
+def parse_forward_embed(encoded_content: str, max_depth: int = 10) -> list[ForwardNode]:
+    """Fallback: parse embedded forward content from CQ code when API fails.
+
+    The CQ forward segment carries URL-encoded + HTML-encoded JSON of the
+    messages array.  This decoder handles that so inner/nested forwards
+    that ``get_forward_msg`` rejects can still yield text content.
+    """
+    try:
+        decoded_url = urllib.parse.unquote(encoded_content)
+        decoded_html = html.unescape(decoded_url)
+        messages = json.loads(decoded_html)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+
+    if not isinstance(messages, list):
+        return []
+
+    normalized = []
+    for item in messages:
+        coerced = _coerce_forward_message_item(item)
+        if coerced is not None:
+            normalized.append(coerced)
+    return parse_forward_nodes(normalized, depth=0, max_depth=max_depth)

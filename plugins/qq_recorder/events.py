@@ -91,6 +91,7 @@ def format_stored_log(event: dict, parsed, max_depth: int, message_db_id: int) -
     raw = unescape_text(event.get("raw_message", ""))
     if len(raw) > 50:
         raw = raw[:47] + "..."
+    raw = raw.replace("\n", "\\n").replace("\r", "")
 
     return "".join(
         [

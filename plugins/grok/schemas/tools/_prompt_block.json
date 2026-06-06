@@ -11,6 +11,7 @@
     "load_tool_guide",
     "track_reply",
     "load_context",
+    "query_chat_history",
     "load_message",
     "extract_forward",
     "read_picture",

@@ -3,7 +3,7 @@ import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
@@ -127,6 +127,50 @@ async def _add_app_shares(session, message_id: int, shares: list[dict]) -> None:
                 raw_data=share.get("raw_data", ""),
             )
         )
+
+
+def _apply_message_query_filters(
+    stmt,
+    *,
+    user_id: str | None = None,
+    chat_type: str | None = None,
+    chat_id: str | None = None,
+    keyword: str | None = None,
+    time_from=None,
+    time_to=None,
+    has_forward: bool | None = None,
+    has_image: bool | None = None,
+    has_reply: bool | None = None,
+    has_video: bool | None = None,
+    has_at: bool | None = None,
+    has_app_share: bool | None = None,
+):
+    direct_filters = (
+        (bool(user_id), Message.user_id == user_id),
+        (bool(chat_type), Message.chat_type == chat_type),
+        (bool(keyword), Message.raw_message.contains(keyword or "")),
+        (time_from is not None, Message.timestamp >= time_from),
+        (time_to is not None, Message.timestamp <= time_to),
+    )
+    for enabled, expression in direct_filters:
+        if enabled:
+            stmt = stmt.where(expression)
+    if chat_id:
+        if chat_type == "group":
+            stmt = stmt.where(Message.group_id == chat_id)
+        elif chat_type == "private":
+            stmt = stmt.where(Message.user_id == chat_id)
+    for column, value in (
+        (Message.has_forward, has_forward),
+        (Message.has_image, has_image),
+        (Message.has_reply, has_reply),
+        (Message.has_video, has_video),
+        (Message.has_at, has_at),
+        (Message.has_app_share, has_app_share),
+    ):
+        if value is not None:
+            stmt = stmt.where(column == value)
+    return stmt
 
 
 class MessageStorage:
@@ -435,6 +479,59 @@ class MessageStorage:
                     stmt = stmt.where(Message.group_id == chat_id)
                 else:
                     stmt = stmt.where(Message.user_id == chat_id)
+            stmt = stmt.limit(limit)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def query_messages(
+        self,
+        *,
+        user_id: str | None = None,
+        chat_type: str | None = None,
+        chat_id: str | None = None,
+        keyword: str | None = None,
+        time_from=None,
+        time_to=None,
+        has_forward: bool | None = None,
+        has_image: bool | None = None,
+        has_reply: bool | None = None,
+        has_video: bool | None = None,
+        has_at: bool | None = None,
+        has_app_share: bool | None = None,
+        limit: int = 20,
+        order: str = "desc",
+    ) -> list[Message]:
+        async with self._session() as session:
+            stmt = select(Message).options(
+                selectinload(Message.images),
+                selectinload(Message.videos),
+                selectinload(Message.replies),
+                selectinload(Message.forward_messages).options(
+                    selectinload(ForwardMessage.children)
+                ),
+                selectinload(Message.at_mentions),
+                selectinload(Message.app_shares),
+            )
+            stmt = _apply_message_query_filters(
+                stmt,
+                user_id=user_id,
+                chat_type=chat_type,
+                chat_id=chat_id,
+                keyword=keyword,
+                time_from=time_from,
+                time_to=time_to,
+                has_forward=has_forward,
+                has_image=has_image,
+                has_reply=has_reply,
+                has_video=has_video,
+                has_at=has_at,
+                has_app_share=has_app_share,
+            )
+
+            if str(order or "desc").lower() == "asc":
+                stmt = stmt.order_by(asc(Message.timestamp), asc(Message.id))
+            else:
+                stmt = stmt.order_by(desc(Message.timestamp), desc(Message.id))
             stmt = stmt.limit(limit)
             result = await session.execute(stmt)
             return list(result.scalars().all())
